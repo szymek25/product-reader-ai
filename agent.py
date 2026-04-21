@@ -38,6 +38,7 @@ from mcp import StdioServerParameters
 from mcp.client.stdio import stdio_client
 from strands import Agent
 from strands.models.bedrock import BedrockModel
+from strands.tools.executors import SequentialToolExecutor
 from strands.tools.mcp import MCPClient
 from strands_tools.browser import LocalChromiumBrowser
 from strands_tools.file_write import file_write
@@ -152,7 +153,8 @@ def main() -> None:
     browser, model, github_mcp_client = build_agent()
 
     # MCPClient is a ToolProvider — pass it directly to Agent.
-    # The Agent manages the MCP session lifecycle internally.
+    # SequentialToolExecutor prevents concurrent Playwright calls which cause
+    # asyncio context conflicts when the LLM outputs multiple browser tool calls.
     agent = Agent(
         model=model,
         system_prompt=SYSTEM_PROMPT,
@@ -161,6 +163,7 @@ def main() -> None:
             file_write,
             github_mcp_client,
         ],
+        tool_executor=SequentialToolExecutor(),
     )
 
     task = _build_task_prompt()
