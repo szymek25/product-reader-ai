@@ -46,6 +46,15 @@ def test_system_prompt_is_non_empty():
     assert len(SYSTEM_PROMPT.strip()) > 0
 
 
+def test_system_prompt_mentions_examples():
+    from prompts import SYSTEM_PROMPT
+
+    # The agent must be instructed to look for examples in the target repository
+    assert "example" in SYSTEM_PROMPT.lower(), (
+        "SYSTEM_PROMPT should instruct the agent to check for example profiles"
+    )
+
+
 def test_task_prompt_template_contains_placeholders():
     from prompts import TASK_PROMPT_TEMPLATE
 
@@ -54,6 +63,7 @@ def test_task_prompt_template_contains_placeholders():
         "{target_repo}",
         "{base_branch}",
         "{new_branch}",
+        "{examples_path}",
         "{validate_workflow}",
         "{publish_workflow}",
     ]
@@ -71,12 +81,14 @@ def test_task_prompt_format():
         target_repo="owner/repo",
         base_branch="main",
         new_branch="feature/test",
+        examples_path="examples",
         validate_workflow="validate.yml",
         publish_workflow="publish.yml",
     )
     assert "https://example.com" in rendered
     assert "owner/repo" in rendered
     assert "feature/test" in rendered
+    assert "examples" in rendered
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -156,6 +168,21 @@ def test_build_task_prompt_single_url():
     assert "feature/product-profile" in prompt
     assert "validate.yml" in prompt
     assert "publish.yml" in prompt
+    # Default examples path should appear in the prompt
+    assert "examples" in prompt
+
+
+def test_build_task_prompt_custom_examples_path():
+    env = _minimal_env({"EXAMPLES_PATH": "samples/profiles"})
+    with patch.dict(os.environ, env, clear=True):
+        import importlib
+
+        import agent as agent_module
+
+        importlib.reload(agent_module)
+        prompt = agent_module._build_task_prompt()
+
+    assert "samples/profiles" in prompt
 
 
 def test_build_task_prompt_multiple_urls():

@@ -7,6 +7,8 @@ Environment variables (see .env.example):
   BASE_BRANCH           branch to create the new branch from (default: main)
   NEW_BRANCH            name for the new branch (default: feature/product-profile)
   WEBSHOP_URLS          comma-separated list of webshop URLs to browse
+  EXAMPLES_PATH         directory in TARGET_REPO that contains sample profiles and
+                        mocked webshop files (default: examples)
   VALIDATE_WORKFLOW     name / filename of the validation workflow (default: validate.yml)
   PUBLISH_WORKFLOW      name / filename of the publish workflow (default: publish.yml)
   AWS_REGION            AWS region for Bedrock (default: us-east-1)
@@ -38,6 +40,7 @@ TARGET_REPO = os.environ.get("TARGET_REPO", "")
 BASE_BRANCH = os.environ.get("BASE_BRANCH", "main")
 NEW_BRANCH = os.environ.get("NEW_BRANCH", "feature/product-profile")
 WEBSHOP_URLS_RAW = os.environ.get("WEBSHOP_URLS", "")
+EXAMPLES_PATH = os.environ.get("EXAMPLES_PATH", "examples")
 VALIDATE_WORKFLOW = os.environ.get("VALIDATE_WORKFLOW", "validate.yml")
 PUBLISH_WORKFLOW = os.environ.get("PUBLISH_WORKFLOW", "publish.yml")
 AWS_REGION = os.environ.get("AWS_REGION", "us-east-1")
@@ -77,6 +80,7 @@ def _build_task_prompt() -> str:
         target_repo=TARGET_REPO,
         base_branch=BASE_BRANCH,
         new_branch=NEW_BRANCH,
+        examples_path=EXAMPLES_PATH,
         validate_workflow=VALIDATE_WORKFLOW,
         publish_workflow=PUBLISH_WORKFLOW,
     )
