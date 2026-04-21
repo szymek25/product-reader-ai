@@ -20,6 +20,14 @@ Environment variables (see .env.example):
                                 (default: Validation — Accept Baseline)
   AWS_REGION                    AWS region for Bedrock (default: us-east-1)
   BEDROCK_MODEL_ID              Bedrock model ID (default: us.anthropic.claude-sonnet-4-5-v1:0)
+  GITHUB_MCP_COMMAND            full command used to launch the GitHub MCP server
+                                (space-separated, first token is the executable).
+                                When set, overrides the default local binary.
+                                Examples:
+                                  docker run -i --rm -e GITHUB_PERSONAL_ACCESS_TOKEN ghcr.io/github/github-mcp-server
+                                  podman run -i --rm -e GITHUB_PERSONAL_ACCESS_TOKEN ghcr.io/github/github-mcp-server
+                                  /usr/local/bin/github-mcp-server stdio
+                                If not set, the agent expects `github-mcp-server` on PATH.
   STRANDS_BROWSER_HEADLESS      set to "true" to run the browser in headless mode (default: true)
 """
 
@@ -56,6 +64,7 @@ GENERATE_BASELINE_WORKFLOW = os.environ.get(
 ACCEPT_BASELINE_WORKFLOW = os.environ.get(
     "ACCEPT_BASELINE_WORKFLOW", "Validation — Accept Baseline"
 )
+GITHUB_MCP_COMMAND = os.environ.get("GITHUB_MCP_COMMAND", "").strip()
 AWS_REGION = os.environ.get("AWS_REGION", "us-east-1")
 BEDROCK_MODEL_ID = os.environ.get(
     "BEDROCK_MODEL_ID", "us.anthropic.claude-sonnet-4-5-v1:0"
@@ -101,7 +110,7 @@ def _build_task_prompt() -> str:
     )
 
 
-def build_agent() -> tuple[Agent, MCPClient]:
+def build_agent() -> tuple[LocalChromiumBrowser, BedrockModel, MCPClient]:
     """
     Construct the Strands agent with all required tools.
 
@@ -112,9 +121,14 @@ def build_agent() -> tuple[Agent, MCPClient]:
     browser = LocalChromiumBrowser()
 
     # ── GitHub MCP server (stdio transport) ─────
+    if GITHUB_MCP_COMMAND:
+        tokens = GITHUB_MCP_COMMAND.split()
+        mcp_command, mcp_args = tokens[0], tokens[1:]
+    else:
+        mcp_command, mcp_args = "github-mcp-server", ["stdio"]
     github_mcp_params = StdioServerParameters(
-        command="github-mcp-server",
-        args=["stdio"],
+        command=mcp_command,
+        args=mcp_args,
         env={**os.environ, "GITHUB_PERSONAL_ACCESS_TOKEN": GITHUB_TOKEN},
     )
     github_mcp_client = MCPClient(lambda: stdio_client(github_mcp_params))
@@ -125,28 +139,29 @@ def build_agent() -> tuple[Agent, MCPClient]:
         region_name=AWS_REGION,
     )
 
-    return (
-        Agent(
-            model=model,
-            system_prompt=SYSTEM_PROMPT,
-            tools=[
-                browser.browser,
-                file_write,
-            ],
-        ),
-        github_mcp_client,
-    )
+    # NOTE: github_mcp_client.tools is only accessible after entering the
+    # client's context manager.  We return the ingredients separately so
+    # main() can assemble the Agent inside `with github_mcp_client:`.
+    return browser, model, github_mcp_client
 
 
 def main() -> None:
     """Entry point for the product-reader-ai agent."""
     _validate_config()
 
-    agent, github_mcp_client = build_agent()
+    browser, model, github_mcp_client = build_agent()
 
     with github_mcp_client:
-        # Extend the agent's toolset with the GitHub MCP tools
-        agent.tools = [*agent.tools, *github_mcp_client.tools]
+        # list_tools_sync() must be called after the client context is entered.
+        agent = Agent(
+            model=model,
+            system_prompt=SYSTEM_PROMPT,
+            tools=[
+                browser.browser,
+                file_write,
+                *github_mcp_client.list_tools_sync(),
+            ],
+        )
 
         task = _build_task_prompt()
         print("=" * 60)

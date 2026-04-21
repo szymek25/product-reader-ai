@@ -20,8 +20,6 @@ High-level workflow
      • detailed / long description
      • all available images
      • features / specifications / attributes (whatever the site exposes)
-   Record additional fields (price, currency, SKU, availability, URL, category, tags …)
-   whenever they are present.
 3. Derive a short, URL-safe slug for this webshop (lower-kebab-case, e.g. `acme-store`).
    This slug is used as:
      • the profile filename:        `{slug}.json`  committed to `validation/profiles/`
