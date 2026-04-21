@@ -151,27 +151,27 @@ def main() -> None:
 
     browser, model, github_mcp_client = build_agent()
 
-    with github_mcp_client:
-        # list_tools_sync() must be called after the client context is entered.
-        agent = Agent(
-            model=model,
-            system_prompt=SYSTEM_PROMPT,
-            tools=[
-                browser.browser,
-                file_write,
-                *github_mcp_client.list_tools_sync(),
-            ],
-        )
+    # MCPClient is a ToolProvider — pass it directly to Agent.
+    # The Agent manages the MCP session lifecycle internally.
+    agent = Agent(
+        model=model,
+        system_prompt=SYSTEM_PROMPT,
+        tools=[
+            browser.browser,
+            file_write,
+            github_mcp_client,
+        ],
+    )
 
-        task = _build_task_prompt()
-        print("=" * 60)
-        print("Starting product-reader-ai agent …")
-        print("=" * 60)
-        result = agent(task)
-        print("=" * 60)
-        print("Agent completed.")
-        print("=" * 60)
-        print(result)
+    task = _build_task_prompt()
+    print("=" * 60)
+    print("Starting product-reader-ai agent …")
+    print("=" * 60)
+    result = agent(task)
+    print("=" * 60)
+    print("Agent completed.")
+    print("=" * 60)
+    print(result)
 
 
 if __name__ == "__main__":
