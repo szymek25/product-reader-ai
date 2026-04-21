@@ -2,18 +2,25 @@
 product-reader-ai – Strands agent entry point.
 
 Environment variables (see .env.example):
-  GITHUB_TOKEN          GitHub personal access token with repo + workflow scopes
-  TARGET_REPO           owner/repo of the repository to commit the profile to
-  BASE_BRANCH           branch to create the new branch from (default: main)
-  NEW_BRANCH            name for the new branch (default: feature/product-profile)
-  WEBSHOP_URLS          comma-separated list of webshop URLs to browse
-  EXAMPLES_PATH         directory in TARGET_REPO that contains sample profiles and
-                        mocked webshop files (default: examples)
-  VALIDATE_WORKFLOW     name / filename of the validation workflow (default: validate.yml)
-  PUBLISH_WORKFLOW      name / filename of the publish workflow (default: publish.yml)
-  AWS_REGION            AWS region for Bedrock (default: us-east-1)
-  BEDROCK_MODEL_ID      Bedrock model ID (default: us.anthropic.claude-sonnet-4-5-v1:0)
-  STRANDS_BROWSER_HEADLESS  set to "true" to run the browser in headless mode (default: true)
+  GITHUB_TOKEN                  GitHub personal access token with repo + workflow scopes
+  TARGET_REPO                   owner/repo of the repository to commit files to
+  BASE_BRANCH                   branch to create the new branch from (default: main)
+  WEBSHOP_URLS                  comma-separated list of webshop URLs to browse
+  FEATURES_PATH                 path in TARGET_REPO with product feature/test examples
+                                used to learn the profile schema (default: features/products)
+  MOCKS_PATH                    path in TARGET_REPO with mock HTML pages used to learn
+                                the test scenario structure (default: public/mock)
+  PROFILES_PATH                 output path for generated profile files
+                                (default: validation/profiles)
+  TESTS_PATH                    output path for generated test scenario files
+                                (default: validation/tests)
+  GENERATE_BASELINE_WORKFLOW    workflow name for generating baseline artifacts
+                                (default: Validation — Generate Baseline)
+  ACCEPT_BASELINE_WORKFLOW      workflow name for accepting a baseline
+                                (default: Validation — Accept Baseline)
+  AWS_REGION                    AWS region for Bedrock (default: us-east-1)
+  BEDROCK_MODEL_ID              Bedrock model ID (default: us.anthropic.claude-sonnet-4-5-v1:0)
+  STRANDS_BROWSER_HEADLESS      set to "true" to run the browser in headless mode (default: true)
 """
 
 import os
@@ -38,11 +45,17 @@ load_dotenv()
 GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "")
 TARGET_REPO = os.environ.get("TARGET_REPO", "")
 BASE_BRANCH = os.environ.get("BASE_BRANCH", "main")
-NEW_BRANCH = os.environ.get("NEW_BRANCH", "feature/product-profile")
 WEBSHOP_URLS_RAW = os.environ.get("WEBSHOP_URLS", "")
-EXAMPLES_PATH = os.environ.get("EXAMPLES_PATH", "examples")
-VALIDATE_WORKFLOW = os.environ.get("VALIDATE_WORKFLOW", "validate.yml")
-PUBLISH_WORKFLOW = os.environ.get("PUBLISH_WORKFLOW", "publish.yml")
+FEATURES_PATH = os.environ.get("FEATURES_PATH", "features/products")
+MOCKS_PATH = os.environ.get("MOCKS_PATH", "public/mock")
+PROFILES_PATH = os.environ.get("PROFILES_PATH", "validation/profiles")
+TESTS_PATH = os.environ.get("TESTS_PATH", "validation/tests")
+GENERATE_BASELINE_WORKFLOW = os.environ.get(
+    "GENERATE_BASELINE_WORKFLOW", "Validation — Generate Baseline"
+)
+ACCEPT_BASELINE_WORKFLOW = os.environ.get(
+    "ACCEPT_BASELINE_WORKFLOW", "Validation — Accept Baseline"
+)
 AWS_REGION = os.environ.get("AWS_REGION", "us-east-1")
 BEDROCK_MODEL_ID = os.environ.get(
     "BEDROCK_MODEL_ID", "us.anthropic.claude-sonnet-4-5-v1:0"
@@ -79,10 +92,12 @@ def _build_task_prompt() -> str:
         webshop_urls=webshop_urls,
         target_repo=TARGET_REPO,
         base_branch=BASE_BRANCH,
-        new_branch=NEW_BRANCH,
-        examples_path=EXAMPLES_PATH,
-        validate_workflow=VALIDATE_WORKFLOW,
-        publish_workflow=PUBLISH_WORKFLOW,
+        features_path=FEATURES_PATH,
+        mocks_path=MOCKS_PATH,
+        profiles_path=PROFILES_PATH,
+        tests_path=TESTS_PATH,
+        generate_baseline_workflow=GENERATE_BASELINE_WORKFLOW,
+        accept_baseline_workflow=ACCEPT_BASELINE_WORKFLOW,
     )
 
 
