@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "product-reader-ai"
+version = "0.1.0"
+description = "A Strands agent that reads webshops, generates a product profile and manages the result via GitHub"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "strands-agents>=1.36.0",
+    "strands-agents-tools>=0.5.0",
+    "playwright>=1.50.0",
+    "nest_asyncio>=1.6.0",
+    "python-dotenv>=1.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.24.0",
+    "pytest-mock>=3.14.0",
+]
+
+[project.scripts]
+product-reader-ai = "agent:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
