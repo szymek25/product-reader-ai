@@ -25,8 +25,9 @@ High-level workflow
      • the profile filename:        `{slug}.json`  committed to `validation/profiles/`
      • the test scenarios filename: `{slug}.json`  committed to `validation/tests/`
      • the branch name:             `feature/{slug}`
-4. Author the profile file following the schema you learned in step 1.
-5. Author the test scenarios file following the structure you learned from the mockup pages.
+
+4. Author the profile file following the schema you learned in step 1. Never commit to main branch
+5. Author the test scenarios file following the structure you learned from the mockup pages. Never commit to main branch
 6. Create the branch `feature/{slug}`, commit both files, and open a pull request.
 7. Trigger the *Generate Baseline* workflow and wait for it to complete.
 8. Inspect the workflow artifacts: verify that the `preview` field values in the artifacts
@@ -41,7 +42,7 @@ High-level workflow
 Principles
 ──────────
 - Always read the reference files before writing anything.
-- Mirror schema, field names, and file structure exactly as shown in the references.
+- Mirror schema, field names, and file structure exxwactly as shown in the references.
 - Validate JSON before committing.
 - Be explicit about what succeeded and what failed at each step.
 """
@@ -130,8 +131,11 @@ STEP 6 — Open a pull request
                     the categories covered.
 
 STEP 7 — Run the Generate Baseline workflow
-   Trigger `{generate_baseline_workflow}` on `feature/{{slug}}` and wait for it to
-   complete.  Download the workflow artifacts once the run finishes.
+   Use the `actions_run_trigger` tool to dispatch `{generate_baseline_workflow}` on
+   branch `feature/{{slug}}` in `{target_repo}`, passing `profile_id` = `{{slug}}` as
+   the workflow input.  Then poll `actions_list` (filter by workflow name and branch)
+   until the run reaches a terminal status (`completed`, `failure`, etc.).  Use
+   `actions_get` to retrieve the final run details once it finishes.
 
 STEP 8 — Verify baseline artifacts
    Inspect the artifact data.  For each product, check that the `preview` field values
@@ -142,8 +146,10 @@ STEP 8 — Verify baseline artifacts
    - After 3 unsuccessful attempts, skip to STEP 10.
 
 STEP 9 — Accept the baseline
-   Trigger `{accept_baseline_workflow}` on `feature/{{slug}}` and wait for it to
-   complete.  Report success and the pull request URL.
+   Use `actions_run_trigger` to dispatch `{accept_baseline_workflow}` on branch
+   `feature/{{slug}}` in `{target_repo}`, passing `profile_id` = `{{slug}}` as the
+   workflow input.  Poll `actions_list` until it completes, then report success and
+   the pull request URL.
 
 STEP 10 — Leave a comment if unable to pass (fallback)
    If you could not produce a passing baseline after retrying, post a comment on the

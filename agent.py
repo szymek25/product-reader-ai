@@ -130,7 +130,12 @@ def build_agent() -> tuple[LocalChromiumBrowser, BedrockModel, MCPClient]:
     github_mcp_params = StdioServerParameters(
         command=mcp_command,
         args=mcp_args,
-        env={**os.environ, "GITHUB_PERSONAL_ACCESS_TOKEN": GITHUB_TOKEN},
+        env={
+            **os.environ,
+            "GITHUB_PERSONAL_ACCESS_TOKEN": GITHUB_TOKEN,
+            # Enable the actions toolset so workflow-trigger tools are available.
+            "GITHUB_TOOLSETS": "default,actions",
+        },
     )
     github_mcp_client = MCPClient(lambda: stdio_client(github_mcp_params))
 
