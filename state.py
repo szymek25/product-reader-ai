@@ -89,6 +89,31 @@ def load_schema(slug: str) -> str:
 
 
 @tool
+def add_product(slug: str, product_json: str) -> str:
+    """
+    Append a single product record to the saved products list for a webshop slug.
+
+    Call this immediately after extracting each product in STEP 1.  The tool
+    reads the current list from disk, appends the new product, and writes it
+    back — so the agent never needs to keep the growing array in its context.
+
+    Args:
+        slug: The webshop slug (e.g. "acme-store").
+        product_json: A JSON string of a single product object with at minimum:
+            name, short_description, long_description, images, features.
+            Additional fields (price, sku, url, …) are welcome.
+
+    Returns:
+        Confirmation message including the new total product count.
+    """
+    path = _slug_dir(slug) / "products.json"
+    existing: list = json.loads(path.read_text(encoding="utf-8")) if path.exists() else []
+    existing.append(json.loads(product_json))
+    path.write_text(json.dumps(existing, ensure_ascii=False, indent=2), encoding="utf-8")
+    return f"Product appended. Total saved: {len(existing)}"
+
+
+@tool
 def save_products(slug: str, products_json: str) -> str:
     """
     Persist the 15 collected product records for a webshop slug.

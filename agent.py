@@ -46,6 +46,7 @@ from strands_tools.file_write import file_write
 
 from prompts import SYSTEM_PROMPT, TASK_PROMPT_TEMPLATE
 from state import (
+    add_product,
     load_mismatch_log,
     load_products,
     load_run_state,
@@ -156,6 +157,8 @@ def build_agent() -> tuple[LocalChromiumBrowser, BedrockModel, MCPClient]:
     model = BedrockModel(
         model_id=BEDROCK_MODEL_ID,
         region_name=AWS_REGION,
+        # Cap per-response output to avoid bloating the conversation history.
+        max_tokens=4096,
     )
 
     # NOTE: github_mcp_client.tools is only accessible after entering the
@@ -185,6 +188,7 @@ def main() -> None:
             # Local state persistence
             save_schema,
             load_schema,
+            add_product,
             save_products,
             load_products,
             save_run_state,
@@ -196,7 +200,9 @@ def main() -> None:
         ],
         tool_executor=SequentialToolExecutor(),
         conversation_manager=SlidingWindowConversationManager(
-            window_size=80,
+            # 10 turns: browser payloads are very large; fewer messages in window
+            # prevents "no valid trim point" overflow errors.
+            window_size=10,
             should_truncate_results=True,
         ),
     )
