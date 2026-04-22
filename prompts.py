@@ -16,6 +16,9 @@ Rules (always enforced)
   NEVER call get_html, screenshot, or get_text separately — they waste the
   context window.
 - NEVER explore page structure iteratively. Navigate once, extract once, move on.
+- In STEP 1 call `find_product_links` on the entry page HTML to get a pre-screened,
+  category-diverse list of product URLs. NEVER navigate the shop manually to find
+  products or pass listing HTML to the LLM directly.
 - In STEP 1 call `analyze_product_page` on the FIRST product page HTML to derive
   the selectors. Store the result and reuse the same selectors for every subsequent
   product. NEVER pass raw HTML to the LLM directly — always go through the sub-agent.
@@ -50,14 +53,22 @@ STEP 0 — Learn schemas
 STEP 1 — Collect 15 products
   Call `load_products`(slug) → parse as JSON array; let N = len(result).
   If N >= 15 → skip entire step.
-  Browse the webshop. For each product (starting after the already-collected ones):
-    1. Navigate to the product page and retrieve its full HTML in ONE browser call.
+
+  If N == 0 (fresh run):
+    a. Navigate to the webshop entry page and retrieve its HTML in ONE browser call.
+    b. Call `find_product_links`(html, base_url, 15) — the sub-agent scans category
+       pages via lightweight HTTP fetches, extracts links without sending HTML to
+       the LLM, and returns a JSON array of product URLs spread across categories.
+    c. Store the returned URL list. These are the 15 pages you will visit.
+
+  For each product URL in the list (starting after the already-collected N):
+    1. Navigate to the product page and retrieve its HTML in ONE browser call.
     2. If this is the FIRST product (N == 0):
          a. Call `analyze_product_page`(html) — the sub-agent classifies elements
             and returns a JSON array of {{role, selector, type, surrounding_html,
             sample_text}} objects.
-         b. Store the returned selectors in memory (you will reuse them for every
-            remaining product and in STEP 3). Do NOT pass this HTML to the LLM.
+         b. Store the returned selectors (reuse for every remaining product and in
+            STEP 3). Do NOT pass this HTML to the LLM.
     3. Using the selectors from step 2b, extract the following fields from the page
        (do NOT make additional browser calls — apply the selectors to the already-
        fetched HTML):
