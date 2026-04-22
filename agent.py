@@ -37,6 +37,7 @@ from dotenv import load_dotenv
 from mcp import StdioServerParameters
 from mcp.client.stdio import stdio_client
 from strands import Agent
+from strands.agent.conversation_manager import SlidingWindowConversationManager
 from strands.models.bedrock import BedrockModel
 from strands.tools.executors import SequentialToolExecutor
 from strands.tools.mcp import MCPClient
@@ -44,6 +45,18 @@ from strands_tools.browser import LocalChromiumBrowser
 from strands_tools.file_write import file_write
 
 from prompts import SYSTEM_PROMPT, TASK_PROMPT_TEMPLATE
+from state import (
+    load_mismatch_log,
+    load_products,
+    load_run_state,
+    load_schema,
+    log_mismatch,
+    lookup_slug,
+    register_slug,
+    save_products,
+    save_run_state,
+    save_schema,
+)
 
 load_dotenv()
 
@@ -160,6 +173,8 @@ def main() -> None:
     # MCPClient is a ToolProvider — pass it directly to Agent.
     # SequentialToolExecutor prevents concurrent Playwright calls which cause
     # asyncio context conflicts when the LLM outputs multiple browser tool calls.
+    # SlidingWindowConversationManager keeps history within the context window
+    # and truncates oversized tool results (e.g. raw browser page content).
     agent = Agent(
         model=model,
         system_prompt=SYSTEM_PROMPT,
@@ -167,8 +182,23 @@ def main() -> None:
             browser.browser,
             file_write,
             github_mcp_client,
+            # Local state persistence
+            save_schema,
+            load_schema,
+            save_products,
+            load_products,
+            save_run_state,
+            load_run_state,
+            log_mismatch,
+            load_mismatch_log,
+            register_slug,
+            lookup_slug,
         ],
         tool_executor=SequentialToolExecutor(),
+        conversation_manager=SlidingWindowConversationManager(
+            window_size=40,
+            should_truncate_results=True,
+        ),
     )
 
     task = _build_task_prompt()
