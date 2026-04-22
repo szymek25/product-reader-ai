@@ -45,6 +45,7 @@ from strands_tools.browser import LocalChromiumBrowser
 from strands_tools.file_write import file_write
 
 from prompts import SYSTEM_PROMPT, TASK_PROMPT_TEMPLATE
+from product_page_agent import analyze_product_page
 from state import (
     add_product,
     load_mismatch_log,
@@ -185,6 +186,8 @@ def main() -> None:
             browser.browser,
             file_write,
             github_mcp_client,
+            # Product-page analysis sub-agent
+            analyze_product_page,
             # Local state persistence
             save_schema,
             load_schema,

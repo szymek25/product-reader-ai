@@ -13,9 +13,14 @@ Rules (always enforced)
 - When committing files via `create_or_update_file`, always pass the feature
   branch name explicitly. Omitting it writes to the default (main) branch.
 - STRICT browser budget: max 1 browser call per product page to extract data.
-  Use the JS extraction template in STEP 1. NEVER call get_html, screenshot, or
-  get_text separately — they waste the context window.
+  NEVER call get_html, screenshot, or get_text separately — they waste the
+  context window.
 - NEVER explore page structure iteratively. Navigate once, extract once, move on.
+- In STEP 1 call `analyze_product_page` on the FIRST product page HTML to derive
+  the selectors. Store the result and reuse the same selectors for every subsequent
+  product. NEVER pass raw HTML to the LLM directly — always go through the sub-agent.
+- When building the profile in STEP 3, reuse the selectors already obtained in STEP 1.
+  Do NOT call `analyze_product_page` again. Do NOT guess selectors manually.
 - Validate every product URL before storing: navigate to it and confirm it loads.
 - Validate JSON before committing.
 - Save progress with state tools (save_*/load_*) after every major step.
@@ -46,11 +51,18 @@ STEP 1 — Collect 15 products
   Call `load_products`(slug) → parse as JSON array; let N = len(result).
   If N >= 15 → skip entire step.
   Browse the webshop. For each product (starting after the already-collected ones):
-    1. Navigate to the product page.
-    2. Extract ALL required data in ONE browser call: name, short description,
-       long description, image URLs, features.
-       Do NOT make multiple browser calls to the same page.
-    3. Call `add_product`(slug, <single product JSON string>).
+    1. Navigate to the product page and retrieve its full HTML in ONE browser call.
+    2. If this is the FIRST product (N == 0):
+         a. Call `analyze_product_page`(html) — the sub-agent classifies elements
+            and returns a JSON array of {{role, selector, type, surrounding_html,
+            sample_text}} objects.
+         b. Store the returned selectors in memory (you will reuse them for every
+            remaining product and in STEP 3). Do NOT pass this HTML to the LLM.
+    3. Using the selectors from step 2b, extract the following fields from the page
+       (do NOT make additional browser calls — apply the selectors to the already-
+       fetched HTML):
+         name, short_description, long_description, image_urls, attributes.
+    4. Call `add_product`(slug, <single product JSON string>).
        → Appends to the on-disk array. The full list is NEVER kept in context.
        → A future run resumes from N automatically.
   Stop when `add_product` confirms "Total saved: 15".
@@ -62,6 +74,8 @@ STEP 2 — Derive slug + create branch
   before writing any files.  All subsequent file commits MUST target this branch.
 
 STEP 3 — Write profile file
+  Reuse the selectors derived in STEP 1 (do NOT call `analyze_product_page` again).
+  Build the profile JSON using those selectors and following the schema from STEP 0.
   Commit {profiles_path}/{{slug}}.json to branch feature/{{slug}} (pass branch
   explicitly to `create_or_update_file`).  Follow schema from STEP 0 exactly.
   Call `save_run_state`(slug, {{step:3}}).
