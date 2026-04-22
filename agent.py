@@ -196,7 +196,7 @@ def main() -> None:
         ],
         tool_executor=SequentialToolExecutor(),
         conversation_manager=SlidingWindowConversationManager(
-            window_size=40,
+            window_size=80,
             should_truncate_results=True,
         ),
     )

@@ -12,6 +12,7 @@ High-level workflow
      field conventions used by the codebase.
    - Read mockup HTML pages stored under `{mocks_path}` to understand the structure of
      test scenario files and how selectors / expected values are expressed.
+   - Read files under `{profiles_path}` and `{tests_path}` to see examples of the output formats you are expected to produce.
 2. Browse the given webshop and collect 15 representative product examples that span as
    many different categories as possible and exhibit variety in their attribute structures. Try to open each found product to avoid 404 statues.
    For every product capture at minimum:
