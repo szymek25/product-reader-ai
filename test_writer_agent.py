@@ -24,12 +24,30 @@ strings so they can be passed over an A2A task card unchanged.
 
 from __future__ import annotations
 
+import json
+
 from strands import Agent, tool
 from strands.agent.conversation_manager import SlidingWindowConversationManager
 
 from model_factory import build_model, main_agent_model_id
 import context
 from state import load_products, load_schema, load_selectors
+
+
+def _slim_products(raw: str) -> str:
+    """Truncate long description HTML; keep only first image URL."""
+    try:
+        slimmed = []
+        for p in json.loads(raw):
+            s = dict(p)
+            if isinstance(s.get("description"), str) and len(s["description"]) > 300:
+                s["description"] = s["description"][:300] + "…"
+            if isinstance(s.get("image_urls"), list):
+                s["image_urls"] = s["image_urls"][:1]
+            slimmed.append(s)
+        return json.dumps(slimmed, ensure_ascii=False)
+    except (json.JSONDecodeError, TypeError):
+        return raw
 
 TEST_WRITER_SYSTEM_PROMPT = """\
 You are a test-scenario writing agent.
@@ -88,8 +106,7 @@ def write_tests(
         Confirmation string including the committed file path.
     """
     schema = load_schema._tool_func()
-    selectors = load_selectors._tool_func(slug)
-    products = load_products._tool_func(slug)
+    products = _slim_products(load_products._tool_func(slug))
 
     agent = _build_test_writer_agent(context.github_mcp_client)
     prompt = (
@@ -99,10 +116,9 @@ def write_tests(
         f"Profile file path: {profiles_path}/{slug}.json\n"
         f"Commit path: {tests_path}/{slug}.json\n\n"
         f"=== SCHEMA ===\n{schema}\n\n"
-        f"=== SELECTORS ===\n{selectors}\n\n"
         f"=== SAMPLE PRODUCTS (15) ===\n{products}\n\n"
-        f"First read the committed profile file at {profiles_path}/{slug}.json "
-        f"on branch {branch} in {target_repo} to understand its structure. "
+        f"Read the committed profile file at {profiles_path}/{slug}.json "
+        f"on branch {branch} in {target_repo} — it contains the selectors. "
         f"Then build the test scenarios JSON following the schema exactly and "
         f"commit it to {tests_path}/{slug}.json on branch {branch} in {target_repo}."
     )

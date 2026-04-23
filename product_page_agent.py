@@ -458,8 +458,17 @@ def analyze_product_page(url: str, slug: str = "") -> str:
         "Follow the workflow in your system prompt. "
         f"Start by calling fetch_and_extract_elements({url!r}, {effective_slug!r})."
     )
-    result = agent(prompt)
-    return str(result)
+    result = str(agent(prompt))
+    # Strip bulk fields that are not needed after selector derivation.
+    try:
+        import json as _json
+        slim = [
+            {"role": s.get("role"), "selector": s.get("selector"), "type": s.get("type")}
+            for s in _json.loads(result)
+        ]
+        return _json.dumps(slim, ensure_ascii=False)
+    except (Exception,):
+        return result
 
 
 # ── Product data extraction ────────────────────────────────────────────────

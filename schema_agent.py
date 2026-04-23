@@ -92,7 +92,7 @@ def learn_schema(
         The schema JSON string (also persisted to disk).
     """
     if (STATE_ROOT / "schema.json").exists():
-        return load_schema._tool_func()
+        return "Schema already cached on disk."
 
     agent = _build_schema_agent(context.github_mcp_client)
     prompt = (
@@ -105,7 +105,7 @@ def learn_schema(
     )
     result = str(agent(prompt))
     save_schema._tool_func(result)
-    return result
+    return "Schema learned and saved to disk."
 
 
 if __name__ == "__main__":

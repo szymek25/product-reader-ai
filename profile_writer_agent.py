@@ -22,12 +22,42 @@ strings so they can be passed over an A2A task card unchanged.
 
 from __future__ import annotations
 
+import json
+
 from strands import Agent, tool
 from strands.agent.conversation_manager import SlidingWindowConversationManager
 
 from model_factory import build_model, main_agent_model_id
 import context
 from state import load_products, load_schema, load_selectors
+
+
+def _slim_selectors(raw: str) -> str:
+    """Keep only role, selector, type — drop surrounding_html and sample_text."""
+    try:
+        return json.dumps(
+            [{"role": s.get("role"), "selector": s.get("selector"), "type": s.get("type")}
+             for s in json.loads(raw)],
+            ensure_ascii=False,
+        )
+    except (json.JSONDecodeError, TypeError):
+        return raw
+
+
+def _slim_products(raw: str) -> str:
+    """Truncate long description HTML; keep only first image URL."""
+    try:
+        slimmed = []
+        for p in json.loads(raw):
+            s = dict(p)
+            if isinstance(s.get("description"), str) and len(s["description"]) > 300:
+                s["description"] = s["description"][:300] + "…"
+            if isinstance(s.get("image_urls"), list):
+                s["image_urls"] = s["image_urls"][:1]
+            slimmed.append(s)
+        return json.dumps(slimmed, ensure_ascii=False)
+    except (json.JSONDecodeError, TypeError):
+        return raw
 
 PROFILE_WRITER_SYSTEM_PROMPT = """\
 You are a profile-writing agent.
@@ -82,8 +112,8 @@ def write_profile(
         Confirmation string including the committed file path.
     """
     schema = load_schema._tool_func()
-    selectors = load_selectors._tool_func(slug)
-    products = load_products._tool_func(slug)
+    selectors = _slim_selectors(load_selectors._tool_func(slug))
+    products = _slim_products(load_products._tool_func(slug))
 
     agent = _build_profile_writer_agent(context.github_mcp_client)
     prompt = (

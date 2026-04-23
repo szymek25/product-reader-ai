@@ -28,12 +28,27 @@ plain strings so they can be passed over an A2A task card unchanged.
 
 from __future__ import annotations
 
+import json
+
 from strands import Agent, tool
 from strands.agent.conversation_manager import SlidingWindowConversationManager
 
 from model_factory import build_model, main_agent_model_id
 import context
 from state import load_mismatch_log, load_products, load_run_state, log_mismatch, save_run_state
+
+
+def _slim_products_for_validation(raw: str) -> str:
+    """Keep only url, name, short_description — enough to compare preview values."""
+    try:
+        return json.dumps(
+            [{"url": p.get("url"), "name": p.get("name"),
+              "short_description": p.get("short_description")}
+             for p in json.loads(raw)],
+            ensure_ascii=False,
+        )
+    except (json.JSONDecodeError, TypeError):
+        return raw
 
 VALIDATION_AGENT_SYSTEM_PROMPT = """\
 You are a baseline validation agent.
@@ -108,7 +123,7 @@ def validate_baseline(
         ``"passed"`` if the baseline was accepted, or
         ``"failed_after_3_attempts"`` if all retries were exhausted.
     """
-    products = load_products._tool_func(slug)
+    products = _slim_products_for_validation(load_products._tool_func(slug))
     run_state = load_run_state._tool_func(slug)
 
     agent = _build_validation_agent(context.github_mcp_client)
