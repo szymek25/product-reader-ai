@@ -63,7 +63,7 @@ STEP 1 — Collect 15 products
   For each product URL in the list (starting after the already-collected N):
     1. Navigate to the product page and retrieve its HTML in ONE browser call.
     2. If this is the FIRST product (N == 0):
-         a. Call `analyze_product_page`(product_url) — the sub-agent fetches the
+         a. Call `analyze_product_page`(product_url, slug) — the sub-agent fetches the
             page internally, classifies elements, and returns a JSON array of
             {{role, selector, type, surrounding_html, sample_text}} objects.
             No HTML is passed through the main context.
