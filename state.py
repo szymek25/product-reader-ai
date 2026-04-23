@@ -85,6 +85,52 @@ def load_schema() -> str:
 
 
 # ─────────────────────────────────────────────
+# Product links (URL list)
+# ─────────────────────────────────────────────
+
+
+@tool
+def save_product_links(slug: str, links_json: str) -> str:
+    """
+    Persist the list of product URLs discovered in STEP 1a.
+
+    Call this immediately after find_product_links so the URL list survives a
+    run interruption and the discovery sub-agent does not need to re-crawl.
+
+    Args:
+        slug:       The webshop slug (e.g. "acme-store").
+        links_json: JSON array string of absolute product URL strings.
+
+    Returns:
+        Confirmation message with the file path.
+    """
+    path = _slug_dir(slug) / "product_links.json"
+    path.write_text(links_json, encoding="utf-8")
+    return f"Product links saved to {path}"
+
+
+@tool
+def load_product_links(slug: str) -> str:
+    """
+    Load the previously saved product URL list for a webshop slug.
+
+    Call this at the start of STEP 1 before find_product_links.  If the result
+    is non-empty, skip find_product_links entirely.
+
+    Args:
+        slug: The webshop slug (e.g. "acme-store").
+
+    Returns:
+        The JSON array string that was passed to save_product_links, or an
+        empty string if no link list has been saved for this slug yet.
+    """
+    path = _slug_dir(slug) / "product_links.json"
+    if not path.exists():
+        return ""
+    return path.read_text(encoding="utf-8")
+
+
+# ─────────────────────────────────────────────
 # Page selectors
 # ─────────────────────────────────────────────
 

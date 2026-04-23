@@ -52,11 +52,15 @@ STEP 1 — Collect 15 products
   Call `load_selectors`(slug) → if non-empty, treat this as the saved selector
   set and skip the analyze_product_page call below (even if N == 0).
 
-  If N == 0 (fresh run):
+  Call `load_product_links`(slug) → if non-empty, use this as the URL list and
+  skip find_product_links.
+
+  If N == 0 and load_product_links returned empty (fresh run):
     a. Call `find_product_links`(entry_url, 15) — the sub-agent fetches the entry
        page itself, scans category pages via lightweight HTTP, and returns a JSON
        array of 15 product URLs spread across categories.
-    b. Store the returned URL list. These are the pages you will visit.
+    b. Immediately call `save_product_links`(slug, <the JSON array string>).
+       These are the pages you will visit.
 
   For each product URL in the list (starting after the already-collected N):
     1. If selectors are not yet loaded (load_selectors returned empty):
