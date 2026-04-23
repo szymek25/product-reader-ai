@@ -10,6 +10,7 @@ Directory layout:
     slug_registry.json              # webshop URL → slug mapping (persists across runs)
     <slug>/
       schema.json                   # learned profile + test-scenario schema
+      selectors.json                # CSS selectors derived by analyze_product_page
       products.json                 # 15 collected product records
       run_state.json                # current step, branch, PR URL, attempt count
       mismatches.jsonl              # one JSON object per line – mismatch log
@@ -78,6 +79,52 @@ def load_schema(slug: str) -> str:
         no schema has been saved for this slug yet.
     """
     path = _slug_dir(slug) / "schema.json"
+    if not path.exists():
+        return ""
+    return path.read_text(encoding="utf-8")
+
+
+# ─────────────────────────────────────────────
+# Page selectors
+# ─────────────────────────────────────────────
+
+
+@tool
+def save_selectors(slug: str, selectors_json: str) -> str:
+    """
+    Persist the CSS selectors derived by analyze_product_page for a webshop.
+
+    Call this immediately after the first call to analyze_product_page so the
+    selectors survive a run interruption and do not need to be re-derived.
+
+    Args:
+        slug:           The webshop slug (e.g. "acme-store").
+        selectors_json: The JSON array string returned by analyze_product_page.
+
+    Returns:
+        Confirmation message with the file path.
+    """
+    path = _slug_dir(slug) / "selectors.json"
+    path.write_text(selectors_json, encoding="utf-8")
+    return f"Selectors saved to {path}"
+
+
+@tool
+def load_selectors(slug: str) -> str:
+    """
+    Load the CSS selectors previously saved for a webshop.
+
+    Call this at the start of STEP 1 before processing product pages.  If the
+    result is non-empty, skip the analyze_product_page call entirely.
+
+    Args:
+        slug: The webshop slug (e.g. "acme-store").
+
+    Returns:
+        The JSON array string that was passed to save_selectors, or an empty
+        string if no selectors have been saved for this slug yet.
+    """
+    path = _slug_dir(slug) / "selectors.json"
     if not path.exists():
         return ""
     return path.read_text(encoding="utf-8")
@@ -319,3 +366,63 @@ def lookup_slug(url: str) -> str:
         return registry.get(url, "")
     except json.JSONDecodeError:
         return ""
+
+
+@tool
+def resolve_slug(url: str) -> str:
+    """
+    Return the canonical slug for *url*, creating and persisting one if needed.
+
+    Resolution order:
+      1. Check the slug registry — return the stored slug if present.
+      2. Derive a slug from the URL hostname (strip ``www.``, replace ``.`` with
+         ``-``, lowercase, keep only ``[a-z0-9-]``).
+      3. Register the new mapping so all future calls return the same slug.
+
+    Always prefer this over ``lookup_slug`` + manual slug derivation: it is
+    deterministic, consistent across runs, and automatically persists the mapping.
+
+    Args:
+        url: Any URL belonging to the webshop (scheme + host is sufficient,
+             e.g. ``"https://balticapets.pl"`` or a full product URL).
+
+    Returns:
+        A filesystem-safe, stable slug string (e.g. ``"balticapets-pl"``).
+    """
+    import re
+    from urllib.parse import urlparse
+
+    # Normalise to bare URL so https://balticapets.pl and
+    # https://balticapets.pl/products/foo both resolve to the same slug.
+    parsed = urlparse(url)
+    canonical_url = f"{parsed.scheme}://{parsed.netloc}"
+
+    # 1 — registry look-up
+    registry_path = _STATE_ROOT / "slug_registry.json"
+    registry: dict[str, str] = {}
+    if registry_path.exists():
+        try:
+            registry = json.loads(registry_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            registry = {}
+
+    if canonical_url in registry:
+        return registry[canonical_url]
+
+    # Also accept an exact match on the raw URL (legacy entries).
+    if url in registry:
+        return registry[url]
+
+    # 2 — derive a canonical slug
+    host = parsed.netloc.lower()
+    host = re.sub(r"^www\.", "", host)        # strip www.
+    host = host.replace(".", "-")             # dots → hyphens
+    slug = re.sub(r"[^a-z0-9-]", "", host)   # keep only safe chars
+    slug = re.sub(r"-{2,}", "-", slug).strip("-") or "unknown"
+
+    # 3 — persist so every future call returns the same slug
+    _STATE_ROOT.mkdir(parents=True, exist_ok=True)
+    registry[canonical_url] = slug
+    registry_path.write_text(json.dumps(registry, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    return slug

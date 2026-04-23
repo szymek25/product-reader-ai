@@ -18,9 +18,11 @@ Rules (always enforced)
 - NEVER explore page structure iteratively. Navigate once, extract once, move on.
 - In STEP 1 call `find_product_links`(entry_url, 15) — pass only the webshop URL;
   the tool fetches HTML internally and returns a category-diverse list of product URLs.
-- In STEP 1 call `analyze_product_page` on the FIRST product page HTML to derive
-  the selectors. Store the result and reuse the same selectors for every subsequent
-  product. NEVER pass raw HTML to the LLM directly — always go through the sub-agent.
+- In STEP 1 call `analyze_product_page` on the FIRST product page to derive
+  the selectors, then immediately call `save_selectors`(slug, result) to persist
+  them.  On resume, call `load_selectors`(slug) first — if non-empty, skip
+  `analyze_product_page` entirely and reuse the stored selectors.
+  NEVER pass raw HTML to the LLM directly — always go through the sub-agent.
 - NEVER call `analyze_product_page` again in STEP 3. Do NOT pass URLs or HTML
   to it outside of the first product — reuse stored selectors only.
 - Validate every product URL before storing: navigate to it and confirm it loads.
@@ -40,9 +42,13 @@ Generate Baseline workflow: {generate_baseline_workflow}
 Accept Baseline workflow:   {accept_baseline_workflow}
 
 ─────────────────────────────────────────────
-START — Resume check
-  Call `lookup_slug`(webshop URL) → if slug found, call `load_run_state`(slug)
-  and resume from the step after the last completed one.
+START — Resolve slug + resume check
+  Call `resolve_slug`(webshop URL) → this is the canonical slug for every
+  subsequent call (state files, branch name, artifact directories, etc.).
+  It looks up the slug registry first, so re-runs of the same webshop always
+  reuse the same slug — never derive one manually.
+  Then call `load_run_state`(slug) and resume from the step after the last
+  completed one if a prior run exists.
 
 STEP 0 — Learn schemas
   Call `load_schema`(slug); skip if non-empty.
@@ -53,6 +59,9 @@ STEP 1 — Collect 15 products
   Call `load_products`(slug) → parse as JSON array; let N = len(result).
   If N >= 15 → skip entire step.
 
+  Call `load_selectors`(slug) → if non-empty, treat this as the saved selector
+  set and skip the analyze_product_page call below (even if N == 0).
+
   If N == 0 (fresh run):
     a. Call `find_product_links`(entry_url, 15) — the sub-agent fetches the entry
        page itself, scans category pages via lightweight HTTP, extracts links
@@ -62,14 +71,15 @@ STEP 1 — Collect 15 products
 
   For each product URL in the list (starting after the already-collected N):
     1. Navigate to the product page and retrieve its HTML in ONE browser call.
-    2. If this is the FIRST product (N == 0):
-         a. Call `analyze_product_page`(product_url, slug) — the sub-agent fetches the
-            page internally, classifies elements, and returns a JSON array of
+    2. If selectors are not yet loaded (load_selectors returned empty):
+         a. Call `analyze_product_page`(product_url, slug) — the sub-agent fetches
+            the page internally, classifies elements, and returns a JSON array of
             {{role, selector, type, surrounding_html, sample_text}} objects.
             No HTML is passed through the main context.
-         b. Store the returned selectors (reuse for every remaining product and in
-            STEP 3).
-    3. Using the selectors from step 2b, extract the following fields from the page
+         b. Immediately call `save_selectors`(slug, <the JSON array string>) so the
+            selectors survive any future interruption.
+         c. Use these selectors for all remaining products.
+    3. Using the selectors, extract the following fields from the page
        (do NOT make additional browser calls — apply the selectors to the already-
        fetched HTML):
          name, short_description, long_description, image_urls, attributes.
@@ -78,9 +88,9 @@ STEP 1 — Collect 15 products
        → A future run resumes from N automatically.
   Stop when `add_product` confirms "Total saved: 15".
 
-STEP 2 — Derive slug + create branch
-  Reuse slug from `lookup_slug` if present; otherwise pick a lower-kebab-case slug.
-  Call `register_slug`(webshop URL, slug).
+STEP 2 — Create branch
+  The slug was already resolved in START — do not derive it again.
+  Call `register_slug`(webshop URL, slug) to ensure it is persisted.
   Create branch feature/{{slug}} from {base_branch} in {target_repo} NOW —
   before writing any files.  All subsequent file commits MUST target this branch.
 

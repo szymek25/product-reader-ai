@@ -53,12 +53,15 @@ from state import (
     load_products,
     load_run_state,
     load_schema,
+    load_selectors,
     log_mismatch,
     lookup_slug,
     register_slug,
+    resolve_slug,
     save_products,
     save_run_state,
     save_schema,
+    save_selectors,
 )
 
 load_dotenv()
@@ -187,6 +190,8 @@ def main() -> None:
             # Local state persistence
             save_schema,
             load_schema,
+            save_selectors,
+            load_selectors,
             add_product,
             save_products,
             load_products,
@@ -196,6 +201,7 @@ def main() -> None:
             load_mismatch_log,
             register_slug,
             lookup_slug,
+            resolve_slug,
         ],
         tool_executor=SequentialToolExecutor(),
         conversation_manager=SlidingWindowConversationManager(

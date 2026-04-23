@@ -33,6 +33,7 @@ from bs4 import BeautifulSoup, Tag
 from strands import Agent, tool
 
 from model_factory import build_model, product_page_agent_model_id
+from state import resolve_slug as _slug_from_url
 
 # Root state directory — mirrors state.py so artifacts live alongside other slug data.
 _STATE_ROOT = Path(tempfile.gettempdir()) / "product-reader-ai"
@@ -104,13 +105,6 @@ def _load_elements_artifact(url: str, slug: str) -> list[dict[str, Any]] | None:
     if path.exists():
         return json.loads(path.read_text(encoding="utf-8"))
     return None
-
-
-def _slug_from_url(url: str) -> str:
-    """Derive a filesystem-safe slug from a URL when no explicit slug is given."""
-    from urllib.parse import urlparse
-    netloc = urlparse(url).netloc.lstrip("www.").replace(".", "-")
-    return netloc or "unknown"
 
 
 def _fetch_html(url: str) -> str:
