@@ -27,16 +27,8 @@ from typing import Any
 
 from bs4 import BeautifulSoup, Tag
 from strands import Agent, tool
-from strands.models.bedrock import BedrockModel
 
-# ── Configuration ──────────────────────────────────────────────────────────
-AWS_REGION = os.environ.get("AWS_REGION", "us-east-1")
-BEDROCK_MODEL_ID = os.environ.get(
-    "BEDROCK_MODEL_ID", "us.anthropic.claude-sonnet-4-5-v1:0"
-)
-PRODUCT_PAGE_AGENT_MODEL_ID = os.environ.get(
-    "PRODUCT_PAGE_AGENT_MODEL_ID", BEDROCK_MODEL_ID
-)
+from model_factory import build_model, product_page_agent_model_id
 
 # HTML tags that carry product-relevant content
 _CONTENT_TAGS = frozenset(
@@ -284,11 +276,7 @@ Strict workflow — follow exactly:
 
 def build_product_page_agent() -> Agent:
     """Construct the product-page analysis sub-agent."""
-    model = BedrockModel(
-        model_id=PRODUCT_PAGE_AGENT_MODEL_ID,
-        region_name=AWS_REGION,
-        max_tokens=4096,
-    )
+    model = build_model(product_page_agent_model_id(), max_tokens=4096)
     return Agent(
         model=model,
         system_prompt=PRODUCT_PAGE_SYSTEM_PROMPT,

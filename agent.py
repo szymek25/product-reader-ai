@@ -38,12 +38,12 @@ from mcp import StdioServerParameters
 from mcp.client.stdio import stdio_client
 from strands import Agent
 from strands.agent.conversation_manager import SlidingWindowConversationManager
-from strands.models.bedrock import BedrockModel
 from strands.tools.executors import SequentialToolExecutor
 from strands.tools.mcp import MCPClient
 from strands_tools.browser import LocalChromiumBrowser
 from strands_tools.file_write import file_write
 
+from model_factory import build_model, main_agent_model_id
 from prompts import SYSTEM_PROMPT, TASK_PROMPT_TEMPLATE
 from product_page_agent import analyze_product_page
 from product_links_agent import find_product_links
@@ -127,11 +127,11 @@ def _build_task_prompt() -> str:
     )
 
 
-def build_agent() -> tuple[LocalChromiumBrowser, BedrockModel, MCPClient]:
+def build_agent() -> tuple[LocalChromiumBrowser, MCPClient]:
     """
-    Construct the Strands agent with all required tools.
+    Construct the Strands agent ingredients.
 
-    Returns a tuple of (agent, github_mcp_client) so the caller can manage
+    Returns a tuple of (browser, github_mcp_client) so the caller can manage
     the MCP client context.
     """
     # ── Browser tool ─────────────────────────────
@@ -155,31 +155,24 @@ def build_agent() -> tuple[LocalChromiumBrowser, BedrockModel, MCPClient]:
     )
     github_mcp_client = MCPClient(lambda: stdio_client(github_mcp_params))
 
-    # ── Language model (Amazon Bedrock) ─────────
-    model = BedrockModel(
-        model_id=BEDROCK_MODEL_ID,
-        region_name=AWS_REGION,
-        # Sub-agents handle HTML; main agent only sees structured JSON summaries.
-        max_tokens=2048,
-    )
-
     # NOTE: github_mcp_client.tools is only accessible after entering the
     # client's context manager.  We return the ingredients separately so
     # main() can assemble the Agent inside `with github_mcp_client:`.
-    return browser, model, github_mcp_client
+    return browser, github_mcp_client
 
 
 def main() -> None:
     """Entry point for the product-reader-ai agent."""
     _validate_config()
 
-    browser, model, github_mcp_client = build_agent()
+    browser, github_mcp_client = build_agent()
 
     # MCPClient is a ToolProvider — pass it directly to Agent.
     # SequentialToolExecutor prevents concurrent Playwright calls which cause
     # asyncio context conflicts when the LLM outputs multiple browser tool calls.
     # SlidingWindowConversationManager keeps history within the context window
     # and truncates oversized tool results (e.g. raw browser page content).
+    model = build_model(main_agent_model_id(), max_tokens=2048)
     agent = Agent(
         model=model,
         system_prompt=SYSTEM_PROMPT,
