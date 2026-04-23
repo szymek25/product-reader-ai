@@ -68,13 +68,11 @@ STEP 1 — Collect 15 products
             of {{role, selector, type, surrounding_html, sample_text}} objects.
          b. Immediately call `save_selectors`(slug, <the JSON array string>).
          c. Use these selectors for all remaining products.
-    2. Call `scrape_product`(product_url, selectors_json) — the sub-agent fetches
-       the page internally and returns a structured JSON object with fields:
-         name, short_description, description, image_urls, attributes.
-    3. Call `add_product`(slug, <single product JSON string>).
-       → Appends to the on-disk array. The full list is NEVER kept in context.
-       → A future run resumes from N automatically.
-  Stop when `add_product` confirms "Total saved: 15".
+    2. Call `scrape_product`(product_url, selectors_json, slug) — the sub-agent
+       fetches the page internally, extracts structured product data, and
+       appends it to the on-disk product list automatically.
+       It returns a confirmation like "Total saved: 3".
+  Stop when `scrape_product` confirms "Total saved: 15".
 
 STEP 2 — Create branch
   The slug was already resolved in START — do not derive it again.

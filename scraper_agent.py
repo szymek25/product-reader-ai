@@ -29,9 +29,11 @@ from __future__ import annotations
 import json
 
 from strands import Agent, tool
+from strands.agent.conversation_manager import SlidingWindowConversationManager
 
 from model_factory import build_model, product_page_agent_model_id
 from product_page_agent import extract_product_data, fetch_and_extract_elements
+from state import add_product
 
 SCRAPER_AGENT_SYSTEM_PROMPT = """\
 You are a product data extraction agent.
@@ -58,34 +60,41 @@ def _build_scraper_agent() -> Agent:
         model=model,
         system_prompt=SCRAPER_AGENT_SYSTEM_PROMPT,
         tools=[extract_product_data, fetch_and_extract_elements],
+        conversation_manager=SlidingWindowConversationManager(
+            window_size=10, should_truncate_results=True
+        ),
     )
 
 
 @tool
-def scrape_product(url: str, selectors_json: str) -> str:
+def scrape_product(url: str, selectors_json: str, slug: str) -> str:
     """
-    Extract structured product data from a single product page URL.
+    Extract structured product data from a single product page URL and persist it.
 
     Fetches the page internally — no HTML enters the main context window.
     Attempts a selector-fallback pass if key fields are empty.
+    The extracted product is appended to the on-disk product list via add_product.
 
     Args:
         url:            Absolute URL of the product page.
         selectors_json: JSON array previously returned by analyze_product_page
                         (or loaded via load_selectors).
+        slug:           Webshop slug used to persist the product record.
 
     Returns:
-        JSON object with extracted product fields::
-
-            {
-                "url": "https://…",
-                "name": "Product Title",
-                "short_description": "…",
-                "description": "…",
-                "image_urls": ["https://…"],
-                "attributes": [{"label": "…", "value": "…"}]
-            }
+        Confirmation string from add_product (e.g. "Total saved: 3").
     """
+    # Strip surrounding_html from selectors — not needed for data extraction
+    # and would inflate the context with 2000-char HTML snippets.
+    try:
+        slim = [
+            {k: v for k, v in s.items() if k != "surrounding_html"}
+            for s in json.loads(selectors_json)
+        ]
+        selectors_json = json.dumps(slim, ensure_ascii=False)
+    except (json.JSONDecodeError, TypeError, AttributeError):
+        pass
+
     # Fast path: try direct extraction first without spinning up the sub-agent.
     raw = extract_product_data._tool_func(url, selectors_json)
     try:
@@ -94,7 +103,7 @@ def scrape_product(url: str, selectors_json: str) -> str:
         data = {}
 
     if data.get("name"):
-        return raw  # selectors worked — return immediately
+        return add_product._tool_func(slug, raw)
 
     # Slow path: delegate to the sub-agent for fallback selector discovery.
     agent = _build_scraper_agent()
@@ -104,7 +113,8 @@ def scrape_product(url: str, selectors_json: str) -> str:
         "The name field is empty. Follow the fallback workflow in your system "
         "prompt and return a complete product JSON."
     )
-    return str(agent(prompt))
+    result = str(agent(prompt))
+    return add_product._tool_func(slug, result)
 
 
 if __name__ == "__main__":

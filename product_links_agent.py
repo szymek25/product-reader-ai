@@ -40,6 +40,7 @@ from urllib.parse import urljoin, urlparse
 import httpx
 from bs4 import BeautifulSoup, Tag
 from strands import Agent, tool
+from strands.agent.conversation_manager import SlidingWindowConversationManager
 
 from model_factory import build_model, product_links_agent_model_id
 
@@ -281,6 +282,9 @@ def build_product_links_agent() -> Agent:
         model=model,
         system_prompt=PRODUCT_LINKS_SYSTEM_PROMPT,
         tools=[fetch_and_extract_links],
+        conversation_manager=SlidingWindowConversationManager(
+            window_size=10, should_truncate_results=True
+        ),
     )
 
 

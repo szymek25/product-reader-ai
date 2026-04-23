@@ -56,7 +56,6 @@ from profile_writer_agent import write_profile
 from test_writer_agent import write_tests
 from validation_agent import validate_baseline
 from state import (
-    add_product,
     load_mismatch_log,
     load_product_links,
     load_products,
@@ -178,7 +177,7 @@ def main() -> None:
     # SequentialToolExecutor ensures tool calls are serialised.
     # SlidingWindowConversationManager keeps history within the context window
     # and truncates oversized tool results.
-    model = build_model(main_agent_model_id(), max_tokens=2048)
+    model = build_model(main_agent_model_id(), max_tokens=8192)
     agent = Agent(
         model=model,
         system_prompt=SYSTEM_PROMPT,
@@ -190,7 +189,7 @@ def main() -> None:
             find_product_links,
             # STEP 1b – derive CSS selectors for a product page
             analyze_product_page,
-            # STEP 1c – extract structured data from a product URL
+            # STEP 1c – extract structured data from a product URL and persist it
             scrape_product,
             # STEP 3 – build + commit the profile JSON
             write_profile,
@@ -205,7 +204,6 @@ def main() -> None:
             load_selectors,
             save_product_links,
             load_product_links,
-            add_product,
             save_products,
             load_products,
             save_run_state,

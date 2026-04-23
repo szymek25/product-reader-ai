@@ -31,6 +31,7 @@ from typing import Any
 import httpx
 from bs4 import BeautifulSoup, Tag
 from strands import Agent, tool
+from strands.agent.conversation_manager import SlidingWindowConversationManager
 
 from model_factory import build_model, product_page_agent_model_id
 from state import resolve_slug as _slug_from_url
@@ -399,6 +400,9 @@ def build_product_page_agent() -> Agent:
         model=model,
         system_prompt=PRODUCT_PAGE_SYSTEM_PROMPT,
         tools=[fetch_and_extract_elements, build_selectors],
+        conversation_manager=SlidingWindowConversationManager(
+            window_size=10, should_truncate_results=True
+        ),
     )
 
 

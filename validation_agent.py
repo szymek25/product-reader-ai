@@ -29,6 +29,7 @@ plain strings so they can be passed over an A2A task card unchanged.
 from __future__ import annotations
 
 from strands import Agent, tool
+from strands.agent.conversation_manager import SlidingWindowConversationManager
 
 from model_factory import build_model, main_agent_model_id
 import context
@@ -73,6 +74,9 @@ def _build_validation_agent(github_mcp_client) -> Agent:
             save_run_state,
             load_run_state,
         ],
+        conversation_manager=SlidingWindowConversationManager(
+            window_size=20, should_truncate_results=True
+        ),
     )
 
 
