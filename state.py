@@ -8,8 +8,8 @@ webshop or re-reading reference files.
 Directory layout:
   <TMPDIR>/product-reader-ai/
     slug_registry.json              # webshop URL → slug mapping (persists across runs)
+    schema.json                     # shared profile + test-scenario schema (all webshops)
     <slug>/
-      schema.json                   # learned profile + test-scenario schema
       selectors.json                # CSS selectors derived by analyze_product_page
       products.json                 # 15 collected product records
       run_state.json                # current step, branch, PR URL, attempt count
@@ -23,7 +23,8 @@ from pathlib import Path
 from strands import tool
 
 # Root directory for all persisted state
-_STATE_ROOT = Path(tempfile.gettempdir()) / "product-reader-ai"
+STATE_ROOT = Path(tempfile.gettempdir()) / "product-reader-ai"
+_STATE_ROOT = STATE_ROOT  # backward-compat alias
 
 
 def _slug_dir(slug: str) -> Path:
@@ -39,46 +40,45 @@ def _slug_dir(slug: str) -> Path:
 
 
 @tool
-def save_schema(slug: str, schema_json: str) -> str:
+def save_schema(schema_json: str) -> str:
     """
-    Persist the learned profile/test-scenario schema for a webshop slug.
+    Persist the shared profile/test-scenario schema.
 
-    Call this immediately after reading the reference files in STEP 0 so the
-    schema does not have to be re-fetched if the run is interrupted.
+    The schema is not webshop-specific — it is derived from the repository’s
+    reference files and reused across all slugs.  Call this once in STEP 0
+    so the schema does not have to be re-fetched on subsequent runs.
 
     Args:
-        slug: The webshop slug (e.g. "acme-store").
         schema_json: A JSON string containing the learned schema data.
-            Recommended structure:
-              {
-                "profile_schema": { ... },   // field names, types, nesting
-                "test_scenario_structure": { ... }  // selectors, expected-value conventions
-              }
+            Recommended structure::
+
+                {
+                  "profile_schema": { ... },
+                  "test_scenario_structure": { ... }
+                }
 
     Returns:
         Confirmation message with the file path.
     """
-    path = _slug_dir(slug) / "schema.json"
+    _STATE_ROOT.mkdir(parents=True, exist_ok=True)
+    path = _STATE_ROOT / "schema.json"
     path.write_text(schema_json, encoding="utf-8")
     return f"Schema saved to {path}"
 
 
 @tool
-def load_schema(slug: str) -> str:
+def load_schema() -> str:
     """
-    Load the previously persisted schema for a webshop slug.
+    Load the shared profile/test-scenario schema.
 
-    Call this at the start of a run before STEP 0.  If the result is non-empty
-    you can skip reading the reference files again.
-
-    Args:
-        slug: The webshop slug (e.g. "acme-store").
+    Call this at the start of every run before STEP 0.  If the result is
+    non-empty the schema is already known and STEP 0 can be skipped.
 
     Returns:
         The JSON string that was passed to save_schema, or an empty string if
-        no schema has been saved for this slug yet.
+        no schema has been saved yet.
     """
-    path = _slug_dir(slug) / "schema.json"
+    path = _STATE_ROOT / "schema.json"
     if not path.exists():
         return ""
     return path.read_text(encoding="utf-8")

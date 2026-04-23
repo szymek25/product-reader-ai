@@ -1,23 +1,28 @@
 """
-product-reader-ai – Strands agent entry point.
+product-reader-ai – Strands orchestrator agent entry point.
+
+The orchestrator drives the high-level workflow (STEP 0–9).  All domain work
+is delegated to specialised sub-agents exposed as @tool wrappers:
+
+  schema_agent         – STEP 0: reads reference files, persists shared schema
+  product_links_agent  – STEP 1a: discovers product URLs via HTTP
+  product_page_agent   – STEP 1b: derives CSS selectors for a product page
+  scraper_agent        – STEP 1c: extracts structured data from a product URL
+  profile_writer_agent – STEP 3: builds + commits the profile JSON
+  test_writer_agent    – STEP 4: builds + commits the test scenarios JSON
+  validation_agent     – STEP 6–7: baseline dispatch → verify → retry loop
 
 Environment variables (see .env.example):
   GITHUB_TOKEN                  GitHub personal access token with repo + workflow scopes
   TARGET_REPO                   owner/repo of the repository to commit files to
   BASE_BRANCH                   branch to create the new branch from (default: main)
-  WEBSHOP_URLS                  comma-separated list of webshop URLs to browse
-  FEATURES_PATH                 path in TARGET_REPO with product feature/test examples
-                                used to learn the profile schema (default: features/products)
-  MOCKS_PATH                    path in TARGET_REPO with mock HTML pages used to learn
-                                the test scenario structure (default: public/mock)
+  WEBSHOP_URLS                  comma-separated list of webshop URLs to process
+  FEATURES_PATH                 path in TARGET_REPO with product feature/profile examples
+  MOCKS_PATH                    path in TARGET_REPO with mock HTML / test scenario examples
   PROFILES_PATH                 output path for generated profile files
-                                (default: validation/profiles)
   TESTS_PATH                    output path for generated test scenario files
-                                (default: validation/tests)
   GENERATE_BASELINE_WORKFLOW    workflow name for generating baseline artifacts
-                                (default: Validation — Generate Baseline)
   ACCEPT_BASELINE_WORKFLOW      workflow name for accepting a baseline
-                                (default: Validation — Accept Baseline)
   AWS_REGION                    AWS region for Bedrock (default: us-east-1)
   BEDROCK_MODEL_ID              Bedrock model ID (default: us.anthropic.claude-sonnet-4-5-v1:0)
   GITHUB_MCP_COMMAND            full command used to launch the GitHub MCP server
@@ -40,10 +45,16 @@ from strands.agent.conversation_manager import SlidingWindowConversationManager
 from strands.tools.executors import SequentialToolExecutor
 from strands.tools.mcp import MCPClient
 
+import context
 from model_factory import build_model, main_agent_model_id
 from prompts import SYSTEM_PROMPT, TASK_PROMPT_TEMPLATE
-from product_page_agent import analyze_product_page, extract_product_data
+from schema_agent import learn_schema
+from product_page_agent import analyze_product_page
 from product_links_agent import find_product_links
+from scraper_agent import scrape_product
+from profile_writer_agent import write_profile
+from test_writer_agent import write_tests
+from validation_agent import validate_baseline
 from state import (
     add_product,
     load_mismatch_log,
@@ -159,6 +170,7 @@ def main() -> None:
     _validate_config()
 
     github_mcp_client = build_agent()
+    context.github_mcp_client = github_mcp_client
 
     # MCPClient is a ToolProvider — pass it directly to Agent.
     # SequentialToolExecutor ensures tool calls are serialised.
@@ -170,12 +182,20 @@ def main() -> None:
         system_prompt=SYSTEM_PROMPT,
         tools=[
             github_mcp_client,
-            # Product-page analysis sub-agent
-            analyze_product_page,
-            # Product data extraction (CSS-selector-based, no browser)
-            extract_product_data,
-            # Product-link discovery sub-agent
+            # STEP 0 – read reference files → persist shared schema
+            learn_schema,
+            # STEP 1a – discover product URLs
             find_product_links,
+            # STEP 1b – derive CSS selectors for a product page
+            analyze_product_page,
+            # STEP 1c – extract structured data from a product URL
+            scrape_product,
+            # STEP 3 – build + commit the profile JSON
+            write_profile,
+            # STEP 4 – build + commit the test scenarios JSON
+            write_tests,
+            # STEP 6-7 – baseline dispatch → verify → retry loop
+            validate_baseline,
             # Local state persistence
             save_schema,
             load_schema,
