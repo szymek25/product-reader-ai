@@ -47,6 +47,9 @@ AWS_REGION = os.environ.get("AWS_REGION", "us-east-1")
 BEDROCK_MODEL_ID = os.environ.get(
     "BEDROCK_MODEL_ID", "us.anthropic.claude-sonnet-4-5-v1:0"
 )
+PRODUCT_LINKS_AGENT_MODEL_ID = os.environ.get(
+    "PRODUCT_LINKS_AGENT_MODEL_ID", BEDROCK_MODEL_ID
+)
 
 # Maximum links returned per extract_links call (keeps LLM context small)
 _MAX_LINKS = 200
@@ -292,7 +295,7 @@ Strict workflow — follow exactly:
 def build_product_links_agent() -> Agent:
     """Construct the product-link discovery sub-agent."""
     model = BedrockModel(
-        model_id=BEDROCK_MODEL_ID,
+        model_id=PRODUCT_LINKS_AGENT_MODEL_ID,
         region_name=AWS_REGION,
         max_tokens=4096,
     )

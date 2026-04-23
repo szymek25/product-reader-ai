@@ -34,6 +34,9 @@ AWS_REGION = os.environ.get("AWS_REGION", "us-east-1")
 BEDROCK_MODEL_ID = os.environ.get(
     "BEDROCK_MODEL_ID", "us.anthropic.claude-sonnet-4-5-v1:0"
 )
+PRODUCT_PAGE_AGENT_MODEL_ID = os.environ.get(
+    "PRODUCT_PAGE_AGENT_MODEL_ID", BEDROCK_MODEL_ID
+)
 
 # HTML tags that carry product-relevant content
 _CONTENT_TAGS = frozenset(
@@ -282,7 +285,7 @@ Strict workflow — follow exactly:
 def build_product_page_agent() -> Agent:
     """Construct the product-page analysis sub-agent."""
     model = BedrockModel(
-        model_id=BEDROCK_MODEL_ID,
+        model_id=PRODUCT_PAGE_AGENT_MODEL_ID,
         region_name=AWS_REGION,
         max_tokens=4096,
     )
