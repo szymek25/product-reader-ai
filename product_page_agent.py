@@ -25,10 +25,17 @@ import json
 import os
 from typing import Any
 
+import httpx
 from bs4 import BeautifulSoup, Tag
 from strands import Agent, tool
 
 from model_factory import build_model, product_page_agent_model_id
+
+# Per-run URL → HTML cache so a page is only fetched once per analyze call.
+_html_cache: dict[str, str] = {}
+
+# HTTP request timeout in seconds
+_HTTP_TIMEOUT = 15
 
 # HTML tags that carry product-relevant content
 _CONTENT_TAGS = frozenset(
@@ -48,6 +55,35 @@ _ROLE_TYPE: dict[str, str] = {
 # Maximum characters kept for text snippets / surrounding HTML in tool output
 _MAX_TEXT = 300
 _MAX_SURROUNDING = 2_000
+
+
+# ── Private HTTP helper ─────────────────────────────────────────────────────
+
+
+def _fetch_html(url: str) -> str:
+    """Fetch *url* and return HTML, using the per-run cache."""
+    if url in _html_cache:
+        return _html_cache[url]
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (compatible; product-reader-ai/1.0; "
+            "+https://github.com/szymek25/product-reader-ai)"
+        ),
+        "Accept": "text/html,application/xhtml+xml;q=0.9,*/*;q=0.8",
+    }
+    try:
+        response = httpx.get(
+            url, headers=headers, timeout=_HTTP_TIMEOUT, follow_redirects=True
+        )
+        response.raise_for_status()
+        _html_cache[url] = response.text
+        return response.text
+    except httpx.HTTPStatusError as exc:
+        raise RuntimeError(
+            f"HTTP {exc.response.status_code} fetching {url}"
+        ) from exc
+    except httpx.RequestError as exc:
+        raise RuntimeError(f"Request error fetching {url}: {exc}") from exc
 
 
 # ── Private helpers ────────────────────────────────────────────────────────
@@ -110,10 +146,11 @@ def _build_css_selector(elem: Tag) -> str:
 
 
 @tool
-def extract_page_elements(html: str) -> str:
+def fetch_and_extract_elements(url: str) -> str:
     """
-    Parse a product page and return a flat JSON array of meaningful elements.
+    Fetch a product page and return a flat JSON array of meaningful elements.
 
+    Fetches the page via HTTP internally — never exposes raw HTML to the LLM.
     Every entry describes one visible element that might carry product data::
 
         {
@@ -125,14 +162,15 @@ def extract_page_elements(html: str) -> str:
         }
 
     Call this first to get the numbered element list, then classify each entry
-    and pass the classifications to extract_element_selectors.
+    and pass the classifications to build_selectors.
 
     Args:
-        html: Full HTML source of the product page.
+        url: Absolute URL of the product page.
 
     Returns:
         JSON array string – one object per meaningful element.
     """
+    html = _fetch_html(url)
     soup = BeautifulSoup(html, "html.parser")
     result: list[dict[str, Any]] = []
     for idx, elem in _iter_content_elements(soup):
@@ -152,13 +190,15 @@ def extract_page_elements(html: str) -> str:
 
 
 @tool
-def extract_element_selectors(html: str, classified_elements_json: str) -> str:
+def build_selectors(url: str, classified_elements_json: str) -> str:
     """
     Resolve classified elements to CSS selectors and surrounding HTML.
 
+    Uses the same page fetched by fetch_and_extract_elements (cached by URL).
+    Never receives raw HTML as a parameter.
+
     For each entry in *classified_elements_json*, the tool locates the
-    corresponding element in *html* (using the same traversal order as
-    extract_page_elements) and returns:
+    corresponding element and returns:
 
     * ``selector``        – CSS selector that targets the element
     * ``type``            – TEXT | HTML | LINK
@@ -166,12 +206,12 @@ def extract_element_selectors(html: str, classified_elements_json: str) -> str:
     * ``sample_text``     – a short text sample from the element
 
     Args:
-        html:
-            Full HTML source of the product page (identical to what was
-            passed to extract_page_elements).
+        url:
+            Absolute URL of the product page (same URL passed to
+            fetch_and_extract_elements).
         classified_elements_json:
-            JSON array produced by the LLM after reviewing extract_page_elements
-            output, e.g.::
+            JSON array produced by the LLM after reviewing
+            fetch_and_extract_elements output, e.g.::
 
                 [
                     {"index": 0,  "role": "product_name"},
@@ -179,8 +219,7 @@ def extract_element_selectors(html: str, classified_elements_json: str) -> str:
                     {"index": 7,  "role": "description"},
                     {"index": 12, "role": "gallery_image"},
                     {"index": 20, "role": "attribute_table"},
-                    {"index": 21, "role": "attribute"},
-                    {"index": 22, "role": "attribute"}
+                    {"index": 21, "role": "attribute"}
                 ]
 
             Valid roles: ``product_name``, ``short_description``,
@@ -198,10 +237,11 @@ def extract_element_selectors(html: str, classified_elements_json: str) -> str:
                 "sample_text":     "iPhone 15 Pro"
             }
     """
+    html = _fetch_html(url)
     soup = BeautifulSoup(html, "html.parser")
     classifications: list[dict[str, Any]] = json.loads(classified_elements_json)
 
-    # Build index → Tag mapping using the same traversal as extract_page_elements
+    # Build index → Tag mapping using the same traversal as fetch_and_extract_elements
     index_map: dict[int, Tag] = {
         idx: elem for idx, elem in _iter_content_elements(soup)
     }
@@ -252,11 +292,12 @@ def extract_element_selectors(html: str, classified_elements_json: str) -> str:
 PRODUCT_PAGE_SYSTEM_PROMPT = """\
 You are a specialized product page analyser.
 
-Your job: given the HTML of a product page, identify the CSS selectors for
-each product data category so that a scraping profile can be generated.
+Your job: given a product page URL, identify the CSS selectors for each
+product data category so that a scraping profile can be generated.
+NEVER handle raw HTML — use the provided tools which fetch pages internally.
 
 Strict workflow — follow exactly:
-1. Call extract_page_elements(html) to receive a numbered list of elements.
+1. Call fetch_and_extract_elements(url) to receive a numbered list of elements.
 2. Review the list and assign each relevant element index to a role:
      product_name      – main product title (typically the h1)
      short_description – brief summary near the title
@@ -266,10 +307,10 @@ Strict workflow — follow exactly:
      attribute         – individual label cells inside the attribute table
    Multiple indices may share the same role (e.g. several gallery images,
    several attribute rows).
-3. Call extract_element_selectors(html, classified_elements_json) where
+3. Call build_selectors(url, classified_elements_json) where
    classified_elements_json is a JSON array:
        [{"index": N, "role": "role_name"}, ...]
-4. Output the JSON returned by extract_element_selectors verbatim.
+4. Output the JSON returned by build_selectors verbatim.
    Do NOT add prose, markdown formatting, or extra keys.
 """
 
@@ -280,7 +321,7 @@ def build_product_page_agent() -> Agent:
     return Agent(
         model=model,
         system_prompt=PRODUCT_PAGE_SYSTEM_PROMPT,
-        tools=[extract_page_elements, extract_element_selectors],
+        tools=[fetch_and_extract_elements, build_selectors],
     )
 
 
@@ -288,13 +329,15 @@ def build_product_page_agent() -> Agent:
 
 
 @tool
-def analyze_product_page(html: str) -> str:
+def analyze_product_page(url: str) -> str:
     """
-    Analyse a product page HTML and return CSS selectors for every product
-    data field.
+    Analyse a product page and return CSS selectors for every product data field.
+
+    Fetches the page internally — the main agent only passes the URL so no
+    raw HTML ever enters the main context window.
 
     Internally this tool runs a specialised sub-agent that:
-      1. Extracts all meaningful elements from the page.
+      1. Fetches the page and extracts all meaningful elements (no HTML to LLM).
       2. Classifies them as product_name, short_description, description,
          gallery_image, attribute_table, or attribute.
       3. Resolves each classification to a CSS selector, extraction type
@@ -303,7 +346,7 @@ def analyze_product_page(html: str) -> str:
     Use the returned selectors directly when writing the profile JSON file.
 
     Args:
-        html: Full HTML source of the product page.
+        url: Absolute URL of the product page.
 
     Returns:
         JSON array – one object per classified element, e.g.::
@@ -319,6 +362,55 @@ def analyze_product_page(html: str) -> str:
                "type": "LINK",              "surrounding_html": "…", "sample_text": "…"}
             ]
     """
+    _html_cache.clear()  # fresh cache per analyze call
     agent = build_product_page_agent()
-    result = agent(html)
+    result = agent(url)
     return str(result)
+
+
+# ── Standalone entry point ──────────────────────────────────────────────────
+
+if __name__ == "__main__":
+    import argparse
+    import json as _json
+
+    from dotenv import load_dotenv
+
+    load_dotenv()
+
+    parser = argparse.ArgumentParser(
+        description="Run product_page_agent standalone against a live product URL or a local HTML file."
+    )
+    parser.add_argument(
+        "url",
+        help="Absolute URL of the product page (e.g. https://shop.example.com/product/foo)",
+    )
+    parser.add_argument(
+        "--html-file",
+        metavar="FILE",
+        help="Load page HTML from this local file instead of fetching the URL.",
+    )
+    args = parser.parse_args()
+
+    if args.html_file:
+        with open(args.html_file, encoding="utf-8") as fh:
+            _html_cache[args.url] = fh.read()
+        print(f"Loaded HTML from {args.html_file} (cached as {args.url})")
+    else:
+        print(f"Will fetch {args.url} on first tool call …")
+
+    print(f"\nRunning product-page sub-agent …\n{'=' * 60}")
+    _html_cache.clear() if not args.html_file else None  # keep pre-loaded cache
+    agent = build_product_page_agent()
+    result = str(agent(args.url))
+    print("\n" + "=" * 60)
+    print("Result:")
+    try:
+        selectors = _json.loads(result)
+        for entry in selectors:
+            role = entry.get("role", "?")
+            selector = entry.get("selector", "?")
+            sample = entry.get("sample_text", "")[:60]
+            print(f"  {role:<22} {selector:<40} {sample!r}")
+    except Exception:
+        print(result)

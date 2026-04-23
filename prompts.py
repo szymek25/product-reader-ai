@@ -16,14 +16,13 @@ Rules (always enforced)
   NEVER call get_html, screenshot, or get_text separately — they waste the
   context window.
 - NEVER explore page structure iteratively. Navigate once, extract once, move on.
-- In STEP 1 call `find_product_links` on the entry page HTML to get a pre-screened,
-  category-diverse list of product URLs. NEVER navigate the shop manually to find
-  products or pass listing HTML to the LLM directly.
+- In STEP 1 call `find_product_links`(entry_url, 15) — pass only the webshop URL;
+  the tool fetches HTML internally and returns a category-diverse list of product URLs.
 - In STEP 1 call `analyze_product_page` on the FIRST product page HTML to derive
   the selectors. Store the result and reuse the same selectors for every subsequent
   product. NEVER pass raw HTML to the LLM directly — always go through the sub-agent.
-- When building the profile in STEP 3, reuse the selectors already obtained in STEP 1.
-  Do NOT call `analyze_product_page` again. Do NOT guess selectors manually.
+- NEVER call `analyze_product_page` again in STEP 3. Do NOT pass URLs or HTML
+  to it outside of the first product — reuse stored selectors only.
 - Validate every product URL before storing: navigate to it and confirm it loads.
 - Validate JSON before committing.
 - Save progress with state tools (save_*/load_*) after every major step.
@@ -55,20 +54,21 @@ STEP 1 — Collect 15 products
   If N >= 15 → skip entire step.
 
   If N == 0 (fresh run):
-    a. Navigate to the webshop entry page and retrieve its HTML in ONE browser call.
-    b. Call `find_product_links`(html, base_url, 15) — the sub-agent scans category
-       pages via lightweight HTTP fetches, extracts links without sending HTML to
-       the LLM, and returns a JSON array of product URLs spread across categories.
-    c. Store the returned URL list. These are the 15 pages you will visit.
+    a. Call `find_product_links`(entry_url, 15) — the sub-agent fetches the entry
+       page itself, scans category pages via lightweight HTTP, extracts links
+       without sending HTML to the LLM, and returns a JSON array of product URLs
+       spread across categories.
+    b. Store the returned URL list. These are the 15 pages you will visit.
 
   For each product URL in the list (starting after the already-collected N):
     1. Navigate to the product page and retrieve its HTML in ONE browser call.
     2. If this is the FIRST product (N == 0):
-         a. Call `analyze_product_page`(html) — the sub-agent classifies elements
-            and returns a JSON array of {{role, selector, type, surrounding_html,
-            sample_text}} objects.
+         a. Call `analyze_product_page`(product_url) — the sub-agent fetches the
+            page internally, classifies elements, and returns a JSON array of
+            {{role, selector, type, surrounding_html, sample_text}} objects.
+            No HTML is passed through the main context.
          b. Store the returned selectors (reuse for every remaining product and in
-            STEP 3). Do NOT pass this HTML to the LLM.
+            STEP 3).
     3. Using the selectors from step 2b, extract the following fields from the page
        (do NOT make additional browser calls — apply the selectors to the already-
        fetched HTML):

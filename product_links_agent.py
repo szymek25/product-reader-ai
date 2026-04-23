@@ -142,90 +142,11 @@ def _classify_link(href: str, anchor: Tag, ancestor_tag: str, ancestor_class: st
     return is_category, is_product
 
 
-# ── Strands tools ──────────────────────────────────────────────────────────
+# ── Private HTTP helper ───────────────────────────────────────────────────
 
 
-@tool
-def extract_links(html: str, base_url: str) -> str:
-    """
-    Parse a page and return a flat JSON array of all navigable links with
-    heuristic classification – without sending any raw HTML to the LLM.
-
-    Each entry::
-
-        {
-            "index": 0,
-            "href": "https://shop.com/category/tools",
-            "text": "Tools",
-            "tag_context": "nav",
-            "class_context": "main-menu",
-            "is_likely_category": true,
-            "is_likely_product": false
-        }
-
-    Use this output to decide which category pages to explore and which
-    product links to collect.
-
-    Args:
-        html: Full HTML source of the page.
-        base_url: Absolute URL of the page (used to resolve relative hrefs).
-
-    Returns:
-        JSON array string, at most 200 entries, deduplicated by href.
-    """
-    soup = BeautifulSoup(html, "html.parser")
-    seen: set[str] = set()
-    result: list[dict[str, Any]] = []
-
-    for anchor in soup.find_all("a", href=True):
-        href = _resolve_href(anchor["href"], base_url)
-        if not href or href in seen:
-            continue
-        # Only follow links on the same domain
-        if urlparse(href).netloc != urlparse(base_url).netloc:
-            continue
-        seen.add(href)
-
-        text = anchor.get_text(strip=True)[:120]
-        ancestor_tag, ancestor_class = _ancestor_context(anchor)
-        is_cat, is_prod = _classify_link(href, anchor, ancestor_tag, ancestor_class)
-
-        result.append(
-            {
-                "index": len(result),
-                "href": href,
-                "text": text,
-                "tag_context": ancestor_tag,
-                "class_context": ancestor_class,
-                "is_likely_category": is_cat,
-                "is_likely_product": is_prod,
-            }
-        )
-
-        if len(result) >= _MAX_LINKS:
-            break
-
-    return json.dumps(result, ensure_ascii=False)
-
-
-@tool
-def fetch_page_html(url: str) -> str:
-    """
-    Fetch a URL with a plain HTTP GET and return its HTML source.
-
-    Use this to retrieve category / listing pages so their links can be
-    extracted with extract_links without opening a browser.
-
-    Args:
-        url: Absolute URL of the page to fetch.
-
-    Returns:
-        HTML source of the page.
-
-    Raises:
-        RuntimeError: If the server returns a non-2xx status code or the
-            request times out.
-    """
+def _fetch_html(url: str) -> str:
+    """Fetch *url* with a plain HTTP GET and return its HTML source."""
     headers = {
         "User-Agent": (
             "Mozilla/5.0 (compatible; product-reader-ai/1.0; "
@@ -248,29 +169,98 @@ def fetch_page_html(url: str) -> str:
         raise RuntimeError(f"Request error fetching {url}: {exc}") from exc
 
 
+def _parse_links(html: str, base_url: str) -> list[dict[str, Any]]:
+    """Parse *html* and return a list of link dicts (used by the @tool below)."""
+    soup = BeautifulSoup(html, "html.parser")
+    seen: set[str] = set()
+    result: list[dict[str, Any]] = []
+    for anchor in soup.find_all("a", href=True):
+        href = _resolve_href(anchor["href"], base_url)
+        if not href or href in seen:
+            continue
+        if urlparse(href).netloc != urlparse(base_url).netloc:
+            continue
+        seen.add(href)
+        text = anchor.get_text(strip=True)[:120]
+        ancestor_tag, ancestor_class = _ancestor_context(anchor)
+        is_cat, is_prod = _classify_link(href, anchor, ancestor_tag, ancestor_class)
+        result.append(
+            {
+                "index": len(result),
+                "href": href,
+                "text": text,
+                "tag_context": ancestor_tag,
+                "class_context": ancestor_class,
+                "is_likely_category": is_cat,
+                "is_likely_product": is_prod,
+            }
+        )
+        if len(result) >= _MAX_LINKS:
+            break
+    return result
+
+
+# ── Strands tools ──────────────────────────────────────────────────────────
+
+
+@tool
+def fetch_and_extract_links(url: str) -> str:
+    """
+    Fetch a page and return a flat JSON array of all navigable links with
+    heuristic classification – without exposing any raw HTML to the LLM.
+
+    Combines HTTP fetch + link extraction into one call so the LLM never
+    needs to handle or pass raw HTML.
+
+    Each entry::
+
+        {
+            "index": 0,
+            "href": "https://shop.com/category/tools",
+            "text": "Tools",
+            "tag_context": "nav",
+            "class_context": "main-menu",
+            "is_likely_category": true,
+            "is_likely_product": false
+        }
+
+    Use this output to decide which category pages to explore and which
+    product links to collect.
+
+    Args:
+        url: Absolute URL of the page to fetch and parse.
+
+    Returns:
+        JSON array string, at most 200 entries, deduplicated by href.
+    """
+    html = _fetch_html(url)
+    return json.dumps(_parse_links(html, url), ensure_ascii=False)
+
+
 # ── Sub-agent definition ────────────────────────────────────────────────────
 
 PRODUCT_LINKS_SYSTEM_PROMPT = """\
 You are a specialized product-link discovery agent.
 
-Your job: given the HTML of a webshop entry page (homepage or any listing),
-return a JSON array of product page URLs that cover as many DIFFERENT categories
-as possible.
+Your job: given a webshop entry URL, return a JSON array of product page URLs
+that cover as many DIFFERENT categories as possible.
+NEVER handle raw HTML — always use fetch_and_extract_links(url) which fetches
+and parses the page internally and returns only a compact link list.
 
 Strict workflow — follow exactly:
 
-1. Call extract_links(html, base_url) on the provided page.
+1. Call fetch_and_extract_links(entry_url) on the entry page URL you were given.
    Review the returned link list (is_likely_category / is_likely_product flags).
 
 2. From the category links found, pick up to 5 promising categories that look
    distinct from each other. Prefer top-level navigation categories.
 
 3. For each chosen category URL:
-     a. Call fetch_page_html(url) to retrieve the listing page.
-     b. Call extract_links(html_returned, category_url) on the result.
-     c. Note the product links (is_likely_product == true).
+     a. Call fetch_and_extract_links(category_url) to retrieve and parse the
+        listing page.
+     b. Note the product links (is_likely_product == true).
 
-4. Also note any product links directly visible on the original page.
+4. Also note any product links directly visible on the original entry page.
 
 5. Select a final diverse set of product URLs:
    - Aim for the requested count spread across different categories.
@@ -290,7 +280,7 @@ def build_product_links_agent() -> Agent:
     return Agent(
         model=model,
         system_prompt=PRODUCT_LINKS_SYSTEM_PROMPT,
-        tools=[extract_links, fetch_page_html],
+        tools=[fetch_and_extract_links],
     )
 
 
@@ -298,23 +288,27 @@ def build_product_links_agent() -> Agent:
 
 
 @tool
-def find_product_links(html: str, base_url: str, count: int = 15) -> str:
+def find_product_links(entry_url: str, count: int = 15) -> str:
     """
     Discover product page URLs from a webshop, sourced from different categories.
 
+    Fetches the entry page internally — the main agent never needs to pass HTML,
+    which keeps the main context window free of large payloads.
+
     Internally this tool runs a specialised sub-agent that:
-      1. Extracts all links from the entry page without sending HTML to the LLM.
-      2. Identifies category links and fetches each category listing via HTTP.
-      3. Extracts product links from each listing.
-      4. Selects a diverse set of ``count`` product URLs spread across categories.
+      1. Fetches the entry page HTML via HTTP.
+      2. Extracts all links without sending any HTML to the LLM.
+      3. Identifies category links and fetches each category listing via HTTP.
+      4. Extracts product links from each listing.
+      5. Selects a diverse set of ``count`` product URLs spread across categories.
 
     Use this at the start of STEP 1 (before collecting products) to get a
     pre-screened, category-diverse list of product URLs to visit.
 
     Args:
-        html:     Full HTML source of the webshop entry/homepage.
-        base_url: Absolute URL of the entry page (e.g. "https://shop.com/").
-        count:    Number of product URLs to return (default 15).
+        entry_url: Absolute URL of the webshop entry/homepage
+                   (e.g. "https://shop.com/").
+        count:     Number of product URLs to return (default 15).
 
     Returns:
         JSON array string of absolute product URL strings, e.g.::
@@ -327,9 +321,70 @@ def find_product_links(html: str, base_url: str, count: int = 15) -> str:
     """
     agent = build_product_links_agent()
     prompt = (
-        f"Entry page URL: {base_url}\n"
+        f"Entry page URL: {entry_url}\n"
         f"Requested product count: {count}\n\n"
-        f"Entry page HTML follows:\n{html}"
+        f"Call fetch_and_extract_links({entry_url!r}) to start."
     )
     result = agent(prompt)
     return str(result)
+
+
+# ── Standalone entry point ──────────────────────────────────────────────────
+
+if __name__ == "__main__":
+    import argparse
+    import sys
+
+    from dotenv import load_dotenv
+
+    load_dotenv()
+
+    parser = argparse.ArgumentParser(
+        description="Run product_links_agent standalone against a live URL or a local HTML file."
+    )
+    parser.add_argument(
+        "url",
+        help="Entry page URL of the webshop (e.g. https://shop.example.com/)",
+    )
+    parser.add_argument(
+        "--count",
+        type=int,
+        default=15,
+        help="Number of product URLs to return (default: 15)",
+    )
+    parser.add_argument(
+        "--html-file",
+        metavar="FILE",
+        help="Load entry-page HTML from this local file instead of fetching the URL.",
+    )
+    args = parser.parse_args()
+
+    print(f"\nRunning product-links sub-agent (count={args.count}) …\n{'=' * 60}")
+    if args.html_file:
+        # Pre-loaded HTML: register it in the cache so fetch_and_extract_links
+        # returns links from it without making a network request.
+        # We re-use _parse_links directly and feed the agent a pre-seeded prompt.
+        with open(args.html_file, encoding="utf-8") as fh:
+            entry_html = fh.read()
+        import json as _json_inner
+        links_json = _json_inner.dumps(_parse_links(entry_html, args.url), ensure_ascii=False)
+        agent = build_product_links_agent()
+        prompt = (
+            f"Entry page URL: {args.url}\n"
+            f"Requested product count: {args.count}\n\n"
+            f"Here is the pre-extracted link list for the entry page "
+            f"(already fetched from a local file):\n{links_json}\n\n"
+            f"Continue from step 2 of the workflow using these links."
+        )
+        output = str(agent(prompt))
+    else:
+        output = find_product_links._tool_func(args.url, args.count)
+    print("\n" + "=" * 60)
+    print("Result:")
+    try:
+        import json as _json
+        links = _json.loads(output)
+        for i, link in enumerate(links, 1):
+            print(f"  {i:2}. {link}")
+    except Exception:
+        print(output)
