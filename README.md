@@ -3,7 +3,7 @@
 A [Strands](https://strandsagents.com/) agent that:
 
 1. **Learns the profile schema** from example files in the target repository.
-2. **Browses online webshops** using a headless Chromium browser and collects 15 representative products across categories.
+2. **Crawls online webshops** via lightweight HTTP requests and collects 15 representative products across categories.
 3. **Generates a profile file and test scenarios** that match the repository's expected format.
 4. **Commits both files to a new branch** via the [GitHub MCP server](https://github.com/github/github-mcp-server) and opens a pull request.
 5. **Triggers the *Generate Baseline* workflow** and waits for it to complete.
@@ -33,10 +33,7 @@ cd product-reader-ai
 # 2. Install Python dependencies
 pip install -e .
 
-# 3. Install Playwright browsers
-playwright install chromium
-
-# 4. Install the GitHub MCP server  (choose one option)
+# 3. Install the GitHub MCP server  (choose one option)
 
 # Option A – Docker
 docker pull ghcr.io/github/github-mcp-server
@@ -55,7 +52,7 @@ go install github.com/github/github-mcp-server/cmd/github-mcp-server@latest
 # Leave GITHUB_MCP_COMMAND blank if the binary is on your PATH, or set the full path:
 #   GITHUB_MCP_COMMAND=/usr/local/bin/github-mcp-server stdio
 
-# 5. Configure environment variables
+# 4. Configure environment variables
 cp .env.example .env
 $EDITOR .env          # fill in GITHUB_TOKEN, TARGET_REPO, WEBSHOP_URLS, …
 ```
@@ -92,10 +89,9 @@ All configuration is done via environment variables (see `.env.example`):
 | `TESTS_PATH` | Output path in `TARGET_REPO` for generated test scenario files | `validation/tests` |
 | `GENERATE_BASELINE_WORKFLOW` | Workflow name that generates baseline artifacts | `Validation — Generate Baseline` |
 | `ACCEPT_BASELINE_WORKFLOW` | Workflow name that accepts a validated baseline | `Validation — Accept Baseline` |
-| `GITHUB_MCP_COMMAND` | Full launch command for the MCP server (see step 4) | *(calls `github-mcp-server stdio`)* |
+| `GITHUB_MCP_COMMAND` | Full launch command for the MCP server (see step 3) | *(calls `github-mcp-server stdio`)* |
 | `BEDROCK_MODEL_ID` | Amazon Bedrock model ID | `us.anthropic.claude-sonnet-4-5-v1:0` |
 | `AWS_REGION` | AWS region for Bedrock | `us-east-1` |
-| `STRANDS_BROWSER_HEADLESS` | Run browser headless (`true`/`false`) | `true` |
 
 ---
 
@@ -108,7 +104,7 @@ read schema examples (FEATURES_PATH)
 read mock pages (MOCKS_PATH)
       │
       ▼
-browse webshop → collect 15 products across categories
+crawl webshop via HTTP → collect 15 products across categories
       │
       ▼
 derive slug (e.g. acme-store)

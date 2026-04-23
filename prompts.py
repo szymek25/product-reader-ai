@@ -12,20 +12,21 @@ Rules (always enforced)
   Create the feature branch FIRST, then commit files to it.
 - When committing files via `create_or_update_file`, always pass the feature
   branch name explicitly. Omitting it writes to the default (main) branch.
-- STRICT browser budget: max 1 browser call per product page to extract data.
-  NEVER call get_html, screenshot, or get_text separately — they waste the
-  context window.
-- NEVER explore page structure iteratively. Navigate once, extract once, move on.
+- NEVER call a browser or fetch raw HTML — all page fetching is done internally
+  by the provided sub-agent tools (find_product_links, analyze_product_page,
+  extract_product_data).  No HTML ever enters the main context window.
 - In STEP 1 call `find_product_links`(entry_url, 15) — pass only the webshop URL;
   the tool fetches HTML internally and returns a category-diverse list of product URLs.
 - In STEP 1 call `analyze_product_page` on the FIRST product page to derive
   the selectors, then immediately call `save_selectors`(slug, result) to persist
   them.  On resume, call `load_selectors`(slug) first — if non-empty, skip
   `analyze_product_page` entirely and reuse the stored selectors.
-  NEVER pass raw HTML to the LLM directly — always go through the sub-agent.
-- NEVER call `analyze_product_page` again in STEP 3. Do NOT pass URLs or HTML
-  to it outside of the first product — reuse stored selectors only.
-- Validate every product URL before storing: navigate to it and confirm it loads.
+- For every product URL call `extract_product_data`(url, selectors_json) — it
+  fetches the page internally and returns a structured JSON object. Never use
+  a browser to retrieve product data.
+- NEVER call `analyze_product_page` again after selectors are saved.
+- Validate every product URL before storing: call `extract_product_data` and
+  confirm it returns a non-empty name field.
 - Validate JSON before committing.
 - Save progress with state tools (save_*/load_*) after every major step.
 - NEVER ask the user to check workflow results manually — poll autonomously.
@@ -70,8 +71,7 @@ STEP 1 — Collect 15 products
     b. Store the returned URL list. These are the 15 pages you will visit.
 
   For each product URL in the list (starting after the already-collected N):
-    1. Navigate to the product page and retrieve its HTML in ONE browser call.
-    2. If selectors are not yet loaded (load_selectors returned empty):
+    1. If selectors are not yet loaded (load_selectors returned empty):
          a. Call `analyze_product_page`(product_url, slug) — the sub-agent fetches
             the page internally, classifies elements, and returns a JSON array of
             {{role, selector, type, surrounding_html, sample_text}} objects.
@@ -79,11 +79,11 @@ STEP 1 — Collect 15 products
          b. Immediately call `save_selectors`(slug, <the JSON array string>) so the
             selectors survive any future interruption.
          c. Use these selectors for all remaining products.
-    3. Using the selectors, extract the following fields from the page
-       (do NOT make additional browser calls — apply the selectors to the already-
-       fetched HTML):
-         name, short_description, long_description, image_urls, attributes.
-    4. Call `add_product`(slug, <single product JSON string>).
+    2. Call `extract_product_data`(product_url, selectors_json) — the tool fetches
+       the page internally and returns a structured JSON object with fields:
+         name, short_description, description, image_urls, attributes.
+       No HTML enters the main context window.
+    3. Call `add_product`(slug, <single product JSON string>).
        → Appends to the on-disk array. The full list is NEVER kept in context.
        → A future run resumes from N automatically.
   Stop when `add_product` confirms "Total saved: 15".

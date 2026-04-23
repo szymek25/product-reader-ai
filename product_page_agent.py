@@ -458,6 +458,135 @@ def analyze_product_page(url: str, slug: str = "") -> str:
     return str(result)
 
 
+# ── Product data extraction ────────────────────────────────────────────────
+
+_FIELD_ROLES = {
+    "product_name",
+    "short_description",
+    "description",
+    "gallery_image",
+    "attribute_table",
+    "attribute",
+}
+
+
+@tool
+def extract_product_data(url: str, selectors_json: str) -> str:
+    """
+    Fetch a product page and extract structured data using saved CSS selectors.
+
+    Fetches the page via HTTP internally — no HTML is ever passed to the LLM.
+    Use this for every product URL after the selectors have been derived and
+    saved by analyze_product_page / save_selectors.
+
+    Args:
+        url:            Absolute URL of the product page.
+        selectors_json: JSON array previously returned by analyze_product_page
+                        (or loaded via load_selectors), e.g.::
+
+                            [
+                              {"role": "product_name",  "selector": "h1.title",
+                               "type": "TEXT", ...},
+                              {"role": "gallery_image", "selector": "a.thumb",
+                               "type": "LINK", ...}
+                            ]
+
+    Returns:
+        JSON object with extracted product fields::
+
+            {
+                "url": "https://…",
+                "name": "Product Title",
+                "short_description": "…",
+                "description": "…",
+                "image_urls": ["https://…", …],
+                "attributes": [{"label": "…", "value": "…"}, …]
+            }
+
+        Missing fields are omitted rather than returned as null.
+    """
+    html = _fetch_html(url)
+    soup = BeautifulSoup(html, "html.parser")
+    selectors: list[dict[str, Any]] = json.loads(selectors_json)
+
+    result: dict[str, Any] = {"url": url}
+    image_urls: list[str] = []
+    attributes: list[dict[str, str]] = []
+
+    for entry in selectors:
+        role: str = entry.get("role", "")
+        selector: str = entry.get("selector", "")
+        kind: str = entry.get("type", "TEXT")
+        if not selector or role not in _FIELD_ROLES:
+            continue
+
+        elements = soup.select(selector)
+        if not elements:
+            continue
+
+        if role == "gallery_image":
+            for elem in elements:
+                if elem.name == "a":
+                    href = elem.get("href", "")
+                    if href:
+                        image_urls.append(href)
+                elif elem.name == "img":
+                    src = elem.get("src", "")
+                    if src:
+                        image_urls.append(src)
+                else:
+                    src = elem.get("src", "") or elem.get("href", "")
+                    if src:
+                        image_urls.append(src)
+
+        elif role == "attribute":
+            # Attributes come in pairs (label / value) or as table rows.
+            # Try to group by parent row first.
+            parents_seen: set[int] = set()
+            for elem in elements:
+                parent = elem.parent
+                pid = id(parent)
+                if pid in parents_seen:
+                    continue
+                parents_seen.add(pid)
+                cells = parent.find_all(True, recursive=False) if parent else [elem]
+                texts = [c.get_text(strip=True) for c in cells if c.get_text(strip=True)]
+                if len(texts) >= 2:
+                    attributes.append({"label": texts[0], "value": texts[1]})
+                elif texts:
+                    attributes.append({"label": texts[0], "value": ""})
+
+        elif role == "attribute_table":
+            # Skip — we extract attributes from individual attribute cells above.
+            continue
+
+        else:
+            # TEXT / HTML scalar roles
+            elem = elements[0]
+            if kind == "HTML":
+                text = elem.decode_contents().strip()
+            elif kind == "LINK":
+                text = elem.get("href", "") or elem.get_text(strip=True)
+            else:
+                text = elem.get_text(strip=True)
+
+            field_map = {
+                "product_name": "name",
+                "short_description": "short_description",
+                "description": "description",
+            }
+            field = field_map.get(role)
+            if field and text:
+                result[field] = text
+
+    if image_urls:
+        result["image_urls"] = image_urls
+    if attributes:
+        result["attributes"] = attributes
+
+    return json.dumps(result, ensure_ascii=False, indent=2)
+
+
 # ── Standalone entry point ──────────────────────────────────────────────────
 
 if __name__ == "__main__":

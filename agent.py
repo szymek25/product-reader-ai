@@ -28,7 +28,6 @@ Environment variables (see .env.example):
                                   podman run -i --rm -e GITHUB_PERSONAL_ACCESS_TOKEN ghcr.io/github/github-mcp-server
                                   /usr/local/bin/github-mcp-server stdio
                                 If not set, the agent expects `github-mcp-server` on PATH.
-  STRANDS_BROWSER_HEADLESS      set to "true" to run the browser in headless mode (default: true)
 """
 
 import os
@@ -40,12 +39,10 @@ from strands import Agent
 from strands.agent.conversation_manager import SlidingWindowConversationManager
 from strands.tools.executors import SequentialToolExecutor
 from strands.tools.mcp import MCPClient
-from strands_tools.browser import LocalChromiumBrowser
-from strands_tools.file_write import file_write
 
 from model_factory import build_model, main_agent_model_id
 from prompts import SYSTEM_PROMPT, TASK_PROMPT_TEMPLATE
-from product_page_agent import analyze_product_page
+from product_page_agent import analyze_product_page, extract_product_data
 from product_links_agent import find_product_links
 from state import (
     add_product,
@@ -90,9 +87,6 @@ BEDROCK_MODEL_ID = os.environ.get(
     "BEDROCK_MODEL_ID", "us.anthropic.claude-sonnet-4-5-v1:0"
 )
 
-# Run browser in headless mode by default for CI-friendliness
-os.environ.setdefault("STRANDS_BROWSER_HEADLESS", "true")
-
 
 def _validate_config() -> None:
     """Raise an informative error if required configuration is missing."""
@@ -130,16 +124,12 @@ def _build_task_prompt() -> str:
     )
 
 
-def build_agent() -> tuple[LocalChromiumBrowser, MCPClient]:
+def build_agent() -> MCPClient:
     """
     Construct the Strands agent ingredients.
 
-    Returns a tuple of (browser, github_mcp_client) so the caller can manage
-    the MCP client context.
+    Returns the GitHub MCP client so the caller can manage the context.
     """
-    # ── Browser tool ─────────────────────────────
-    browser = LocalChromiumBrowser()
-
     # ── GitHub MCP server (stdio transport) ─────
     if GITHUB_MCP_COMMAND:
         tokens = GITHUB_MCP_COMMAND.split()
@@ -159,32 +149,31 @@ def build_agent() -> tuple[LocalChromiumBrowser, MCPClient]:
     github_mcp_client = MCPClient(lambda: stdio_client(github_mcp_params))
 
     # NOTE: github_mcp_client.tools is only accessible after entering the
-    # client's context manager.  We return the ingredients separately so
-    # main() can assemble the Agent inside `with github_mcp_client:`.
-    return browser, github_mcp_client
+    # client's context manager.  We return the client so main() can assemble
+    # the Agent inside `with github_mcp_client:`.
+    return github_mcp_client
 
 
 def main() -> None:
     """Entry point for the product-reader-ai agent."""
     _validate_config()
 
-    browser, github_mcp_client = build_agent()
+    github_mcp_client = build_agent()
 
     # MCPClient is a ToolProvider — pass it directly to Agent.
-    # SequentialToolExecutor prevents concurrent Playwright calls which cause
-    # asyncio context conflicts when the LLM outputs multiple browser tool calls.
+    # SequentialToolExecutor ensures tool calls are serialised.
     # SlidingWindowConversationManager keeps history within the context window
-    # and truncates oversized tool results (e.g. raw browser page content).
+    # and truncates oversized tool results.
     model = build_model(main_agent_model_id(), max_tokens=2048)
     agent = Agent(
         model=model,
         system_prompt=SYSTEM_PROMPT,
         tools=[
-            browser.browser,
-            file_write,
             github_mcp_client,
             # Product-page analysis sub-agent
             analyze_product_page,
+            # Product data extraction (CSS-selector-based, no browser)
+            extract_product_data,
             # Product-link discovery sub-agent
             find_product_links,
             # Local state persistence
