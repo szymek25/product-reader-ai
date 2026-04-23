@@ -51,7 +51,7 @@ from prompts import SYSTEM_PROMPT, TASK_PROMPT_TEMPLATE
 from schema_agent import learn_schema
 from product_page_agent import analyze_product_page
 from product_links_agent import find_product_links
-from scraper_agent import scrape_product
+from scraper_agent import scrape_all_products, scrape_product
 from profile_writer_agent import write_profile
 from test_writer_agent import write_tests
 from validation_agent import validate_baseline
@@ -189,8 +189,8 @@ def main() -> None:
             find_product_links,
             # STEP 1b – derive CSS selectors for a product page
             analyze_product_page,
-            # STEP 1c – extract structured data from a product URL and persist it
-            scrape_product,
+            # STEP 1c – scrape all product URLs and persist records
+            scrape_all_products,
             # STEP 3 – build + commit the profile JSON
             write_profile,
             # STEP 4 – build + commit the test scenarios JSON

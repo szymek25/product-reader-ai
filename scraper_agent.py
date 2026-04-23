@@ -117,6 +117,64 @@ def scrape_product(url: str, selectors_json: str, slug: str) -> str:
     return add_product._tool_func(slug, result)
 
 
+@tool
+def scrape_all_products(slug: str) -> str:
+    """
+    Scrape all remaining product URLs for a webshop and persist each record.
+
+    Loads the product URL list and selectors entirely from disk — nothing large
+    is passed through the LLM context.  Resumes automatically from the last
+    saved position so interrupted runs are not restarted from scratch.
+
+    Call this once after ``find_product_links`` / ``save_product_links`` and
+    ``analyze_product_page`` / ``save_selectors`` have both been completed.
+    The tool iterates internally and returns only when all 15 products are saved
+    (or the URL list is exhausted).
+
+    Args:
+        slug: Webshop slug (e.g. ``"acme-store"``).
+
+    Returns:
+        A short summary such as ``"Scraped 15 products for acme-store"``.
+    """
+    from state import load_product_links, load_products, load_selectors
+
+    links_raw = load_product_links._tool_func(slug)
+    if not links_raw:
+        return "No product links found — run find_product_links first."
+
+    selectors_raw = load_selectors._tool_func(slug)
+    if not selectors_raw:
+        return "No selectors found — run analyze_product_page first."
+
+    try:
+        urls: list[str] = json.loads(links_raw)
+    except json.JSONDecodeError:
+        return f"Could not parse product links for {slug}."
+
+    # Determine how many products are already saved so we can resume.
+    existing_raw = load_products._tool_func(slug)
+    try:
+        already_saved = len(json.loads(existing_raw)) if existing_raw else 0
+    except (json.JSONDecodeError, TypeError):
+        already_saved = 0
+
+    saved = already_saved
+    for url in urls[already_saved:]:
+        if saved >= 15:
+            break
+        confirmation = scrape_product._tool_func(
+            url=url, selectors_json=selectors_raw, slug=slug
+        )
+        # confirmation is "Product appended. Total saved: N"
+        try:
+            saved = int(confirmation.split("Total saved:")[-1].strip())
+        except (ValueError, IndexError):
+            saved += 1
+
+    return f"Scraped {saved} products for {slug}."
+
+
 if __name__ == "__main__":
     import argparse
 
