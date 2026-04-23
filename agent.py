@@ -159,8 +159,8 @@ def build_agent() -> tuple[LocalChromiumBrowser, BedrockModel, MCPClient]:
     model = BedrockModel(
         model_id=BEDROCK_MODEL_ID,
         region_name=AWS_REGION,
-        # Cap per-response output to avoid bloating the conversation history.
-        max_tokens=4096,
+        # Sub-agents handle HTML; main agent only sees structured JSON summaries.
+        max_tokens=2048,
     )
 
     # NOTE: github_mcp_client.tools is only accessible after entering the
@@ -206,9 +206,8 @@ def main() -> None:
         ],
         tool_executor=SequentialToolExecutor(),
         conversation_manager=SlidingWindowConversationManager(
-            # 10 turns: browser payloads are very large; fewer messages in window
-            # prevents "no valid trim point" overflow errors.
-            window_size=10,
+            # Sub-agents absorb HTML payloads; main agent messages are compact.
+            window_size=20,
             should_truncate_results=True,
         ),
     )
