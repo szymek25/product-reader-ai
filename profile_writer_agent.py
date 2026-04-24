@@ -132,6 +132,76 @@ def write_profile(
     return str(agent(prompt))
 
 
+# ── Local-flow variant ────────────────────────────────────────────────────────
+
+LOCAL_PROFILE_WRITER_SYSTEM_PROMPT = """\
+You are a profile-writing agent (local mode).
+
+You receive:
+  - The profile JSON schema rules (field names, types, nesting, and allowed values).
+  - A JSON array of CSS selectors (role → selector mapping) derived from the webshop.
+  - A JSON array of sample products collected from the webshop.
+  - A local file path where you must save the result.
+
+Your job:
+1. Build a profile JSON file that conforms EXACTLY to the schema rules.
+   Always include: id, product_name, short_description, description, image_urls.
+   Add attribute_table and attributes array if the products contain attribute data.
+2. Populate each selector field using the provided selectors.
+3. Call write_file_to_disk(path, content) to save the file locally.
+4. Output ONLY the confirmation returned by write_file_to_disk — no prose.
+"""
+
+
+def _build_local_profile_writer_agent() -> Agent:
+    from state import write_file_to_disk
+
+    model = build_model(main_agent_model_id(), max_tokens=4096)
+    return Agent(
+        model=model,
+        system_prompt=LOCAL_PROFILE_WRITER_SYSTEM_PROMPT,
+        tools=[write_file_to_disk],
+        conversation_manager=SlidingWindowConversationManager(
+            window_size=10, should_truncate_results=True
+        ),
+    )
+
+
+@tool
+def write_profile_local(slug: str) -> str:
+    """
+    Build the product profile JSON and write it to the slug state directory.
+
+    Local-flow equivalent of ``write_profile`` — no GitHub access required.
+    Reads schema, selectors, and products from disk; generates the profile JSON;
+    writes it to ``<TMPDIR>/product-reader-ai/<slug>/profile.json``.
+
+    Args:
+        slug: Webshop slug (e.g. ``"balticapets-pl"``).
+
+    Returns:
+        Confirmation string with the output file path and byte count.
+    """
+    from state import STATE_ROOT
+
+    schema = PROFILE_SCHEMA
+    selectors = _slim_selectors(load_selectors._tool_func(slug))
+    products = _slim_products(load_products._tool_func(slug))
+    output_path = str(STATE_ROOT / slug / "profile.json")
+
+    agent = _build_local_profile_writer_agent()
+    prompt = (
+        f"Webshop slug: {slug}\n"
+        f"Output file path: {output_path}\n\n"
+        f"=== SCHEMA ===\n{schema}\n\n"
+        f"=== SELECTORS ===\n{selectors}\n\n"
+        f"=== SAMPLE PRODUCTS (15) ===\n{products}\n\n"
+        f"Build the profile JSON following the schema exactly, then call "
+        f'write_file_to_disk("{output_path}", <json_content>).'
+    )
+    return str(agent(prompt))
+
+
 if __name__ == "__main__":
     import argparse
 

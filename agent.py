@@ -47,12 +47,12 @@ from strands.tools.mcp import MCPClient
 
 import context
 from model_factory import build_model, main_agent_model_id
-from prompts import SYSTEM_PROMPT, TASK_PROMPT_TEMPLATE
+from prompts import LOCAL_TASK_PROMPT_TEMPLATE, SYSTEM_PROMPT, TASK_PROMPT_TEMPLATE
 from product_page_agent import analyze_product_page
 from product_links_agent import find_product_links
 from scraper_agent import scrape_all_products
-from profile_writer_agent import write_profile
-from test_writer_agent import write_tests
+from profile_writer_agent import write_profile, write_profile_local
+from test_writer_agent import write_tests, write_tests_local
 from validation_agent import validate_baseline
 from state import (
     load_mismatch_log,
@@ -92,15 +92,20 @@ AWS_REGION = os.environ.get("AWS_REGION", "us-east-1")
 BEDROCK_MODEL_ID = os.environ.get(
     "BEDROCK_MODEL_ID", "us.anthropic.claude-sonnet-4-5-v1:0"
 )
+# When LOCAL_FLOW=true the agent writes profile/tests to disk and skips all
+# GitHub steps (branch creation, commits, PR, validation).
+LOCAL_FLOW: bool = os.environ.get("LOCAL_FLOW", "").strip().lower() in ("1", "true", "yes")
 
 
 def _validate_config() -> None:
     """Raise an informative error if required configuration is missing."""
     missing = []
-    if not GITHUB_TOKEN:
-        missing.append("GITHUB_TOKEN")
-    if not TARGET_REPO:
-        missing.append("TARGET_REPO")
+    if not LOCAL_FLOW:
+        # GitHub credentials only required when running the full remote flow.
+        if not GITHUB_TOKEN:
+            missing.append("GITHUB_TOKEN")
+        if not TARGET_REPO:
+            missing.append("TARGET_REPO")
     if not WEBSHOP_URLS_RAW:
         missing.append("WEBSHOP_URLS")
     if missing:
@@ -112,11 +117,20 @@ def _validate_config() -> None:
 
 def _build_task_prompt() -> str:
     """Build the task prompt from environment variables."""
+    import tempfile
+    from pathlib import Path
+
     webshop_urls = "\n".join(
         f"  - {url.strip()}"
         for url in WEBSHOP_URLS_RAW.split(",")
         if url.strip()
     )
+    if LOCAL_FLOW:
+        local_output_dir = str(Path(tempfile.gettempdir()) / "product-reader-ai")
+        return LOCAL_TASK_PROMPT_TEMPLATE.format(
+            webshop_urls=webshop_urls,
+            local_output_dir=local_output_dir,
+        )
     return TASK_PROMPT_TEMPLATE.format(
         webshop_urls=webshop_urls,
         target_repo=TARGET_REPO,
@@ -162,52 +176,82 @@ def main() -> None:
     """Entry point for the product-reader-ai agent."""
     _validate_config()
 
-    github_mcp_client = build_agent()
-    context.github_mcp_client = github_mcp_client
-
-    # MCPClient is a ToolProvider — pass it directly to Agent.
-    # SequentialToolExecutor ensures tool calls are serialised.
-    # SlidingWindowConversationManager keeps history within the context window
-    # and truncates oversized tool results.
     model = build_model(main_agent_model_id(), max_tokens=8192)
-    agent = Agent(
-        model=model,
-        system_prompt=SYSTEM_PROMPT,
-        tools=[
-            github_mcp_client,
-            # STEP 1a – discover product URLs
-            find_product_links,
-            # STEP 1b – derive CSS selectors for a product page
-            analyze_product_page,
-            # STEP 1c – scrape all product URLs and persist records
-            scrape_all_products,
-            # STEP 3 – build + commit the profile JSON
-            write_profile,
-            # STEP 4 – build + commit the test scenarios JSON
-            write_tests,
-            # STEP 6-7 – baseline dispatch → verify → retry loop
-            validate_baseline,
-            # Local state persistence
-            save_selectors,
-            load_selectors,
-            save_product_links,
-            load_product_links,
-            save_products,
-            load_products,
-            save_run_state,
-            load_run_state,
-            log_mismatch,
-            load_mismatch_log,
-            register_slug,
-            resolve_slug,
-        ],
-        tool_executor=SequentialToolExecutor(),
-        conversation_manager=SlidingWindowConversationManager(
-            # Sub-agents absorb HTML payloads; main agent messages are compact.
-            window_size=20,
-            should_truncate_results=True,
-        ),
+    conv_manager = SlidingWindowConversationManager(
+        window_size=40, should_truncate_results=True
     )
+
+    if LOCAL_FLOW:
+        # ── Local flow: write artifacts to disk, skip all GitHub steps ──────
+        context.github_mcp_client = None
+        print("[LOCAL_FLOW] GitHub steps disabled — artifacts written to disk.")
+        agent = Agent(
+            model=model,
+            system_prompt=SYSTEM_PROMPT,
+            tools=[
+                # STEP 1a – discover product URLs
+                find_product_links,
+                # STEP 1b – derive CSS selectors for a product page
+                analyze_product_page,
+                # STEP 1c – scrape all product URLs and persist records
+                scrape_all_products,
+                # STEP 2 – write profile JSON locally
+                write_profile_local,
+                # STEP 3 – write test scenarios JSON locally
+                write_tests_local,
+                # Local state persistence
+                save_selectors,
+                load_selectors,
+                save_product_links,
+                load_product_links,
+                save_products,
+                load_products,
+                save_run_state,
+                load_run_state,
+                register_slug,
+                resolve_slug,
+            ],
+            tool_executor=SequentialToolExecutor(),
+            conversation_manager=conv_manager,
+        )
+    else:
+        # ── Full GitHub flow ─────────────────────────────────────────────────
+        github_mcp_client = build_agent()
+        context.github_mcp_client = github_mcp_client
+        agent = Agent(
+            model=model,
+            system_prompt=SYSTEM_PROMPT,
+            tools=[
+                github_mcp_client,
+                # STEP 1a – discover product URLs
+                find_product_links,
+                # STEP 1b – derive CSS selectors for a product page
+                analyze_product_page,
+                # STEP 1c – scrape all product URLs and persist records
+                scrape_all_products,
+                # STEP 3 – build + commit the profile JSON
+                write_profile,
+                # STEP 4 – build + commit the test scenarios JSON
+                write_tests,
+                # STEP 6-7 – baseline dispatch → verify → retry loop
+                validate_baseline,
+                # Local state persistence
+                save_selectors,
+                load_selectors,
+                save_product_links,
+                load_product_links,
+                save_products,
+                load_products,
+                save_run_state,
+                load_run_state,
+                log_mismatch,
+                load_mismatch_log,
+                register_slug,
+                resolve_slug,
+            ],
+            tool_executor=SequentialToolExecutor(),
+            conversation_manager=conv_manager,
+        )
 
     task = _build_task_prompt()
     print("=" * 60)

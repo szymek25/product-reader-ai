@@ -74,3 +74,40 @@ STEP 8 — Fallback
   `save_run_state`(slug, {{"step": 8}})
   Report PR URL.
 """
+
+LOCAL_TASK_PROMPT_TEMPLATE = """
+Webshop: {webshop_urls}
+Local output directory: {local_output_dir}
+
+─────────────────────────────────────────────
+START
+  `resolve_slug`(webshop_url) → slug (canonical id for all subsequent calls).
+  `load_run_state`(slug) → resume from the step after the last completed one.
+
+STEP 1 — Collect 15 products
+  a. `load_products`(slug) → if result contains 15 items, skip to STEP 2.
+  b. `load_selectors`(slug) → save result as selectors_json (may be empty).
+  c. `load_product_links`(slug) → if empty:
+       `find_product_links`(webshop_url, 15) → links_json
+       `save_product_links`(slug, links_json)
+  d. If selectors_json is empty:
+       `analyze_product_page`(first URL from links_json, slug) → selectors_json
+       `save_selectors`(slug, selectors_json)
+  e. `scrape_all_products`(slug)
+     Internally iterates every URL, resumes from the last saved position,
+     and returns a summary like "Scraped 15 products for <slug>".
+  `save_run_state`(slug, {{"step": 1}})
+
+STEP 2 — Write profile locally
+  `write_profile_local`(slug)
+  Output: {local_output_dir}/<slug>/profile.json
+  `save_run_state`(slug, {{"step": 2}})
+
+STEP 3 — Write test scenarios locally
+  `write_tests_local`(slug)
+  Output: {local_output_dir}/<slug>/tests.json
+  `save_run_state`(slug, {{"step": 3}})
+
+DONE
+  Report the paths of both written files.
+"""

@@ -447,3 +447,54 @@ def resolve_slug(url: str) -> str:
     registry_path.write_text(json.dumps(registry, indent=2, ensure_ascii=False), encoding="utf-8")
 
     return slug
+
+
+# ─────────────────────────────────────────────
+# Generic local file I/O (used by local-flow writers)
+# ─────────────────────────────────────────────
+
+
+@tool
+def write_file_to_disk(path: str, content: str) -> str:
+    """
+    Write *content* to *path* on the local filesystem.
+
+    Creates parent directories as needed.  Used in local-flow mode so that
+    profile and test-scenario JSON files are written to disk rather than
+    committed to GitHub.
+
+    Args:
+        path:    Absolute path of the file to write.
+        content: UTF-8 text content to write.
+
+    Returns:
+        Confirmation string with the file path and byte count.
+    """
+    from pathlib import Path as _Path
+
+    p = _Path(path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(content, encoding="utf-8")
+    return f"Written {len(content.encode())} bytes to {path}"
+
+
+@tool
+def read_file_from_disk(path: str) -> str:
+    """
+    Read and return the content of a local file.
+
+    Used in local-flow mode so the test-scenario writer can read the profile
+    JSON that was written by ``write_profile_local`` without going to GitHub.
+
+    Args:
+        path: Absolute path of the file to read.
+
+    Returns:
+        UTF-8 text content of the file, or an error message if not found.
+    """
+    from pathlib import Path as _Path
+
+    p = _Path(path)
+    if not p.exists():
+        return f"File not found: {path}"
+    return p.read_text(encoding="utf-8")

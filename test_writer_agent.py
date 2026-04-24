@@ -126,6 +126,80 @@ def write_tests(
     return str(agent(prompt))
 
 
+# ── Local-flow variant ────────────────────────────────────────────────────────
+
+LOCAL_TEST_WRITER_SYSTEM_PROMPT = """\
+You are a test-scenario writing agent (local mode).
+
+You receive:
+  - The test scenario JSON schema rules (field names, types, nesting, and allowed values).
+  - A JSON array of sample products collected from the webshop.
+  - A local path to the already-written profile file (contains selector/attribute keys).
+  - A local file path where you must save the result.
+
+Your job:
+1. Call read_file_from_disk(profile_path) to load the profile and discover attribute keys.
+2. Build a test scenario JSON file that conforms EXACTLY to the schema rules.
+   One test entry per product. Always include: product_name (TEXT),
+   short_description (TEXT), description (HTML), image_urls (LINK).
+   Add attributes.<key> (TEXT) entries for each attribute the product has.
+3. Call write_file_to_disk(tests_path, content) to save the file locally.
+4. Output ONLY the confirmation returned by write_file_to_disk — no prose.
+"""
+
+
+def _build_local_test_writer_agent() -> Agent:
+    from state import read_file_from_disk, write_file_to_disk
+
+    model = build_model(main_agent_model_id(), max_tokens=4096)
+    return Agent(
+        model=model,
+        system_prompt=LOCAL_TEST_WRITER_SYSTEM_PROMPT,
+        tools=[read_file_from_disk, write_file_to_disk],
+        conversation_manager=SlidingWindowConversationManager(
+            window_size=10, should_truncate_results=True
+        ),
+    )
+
+
+@tool
+def write_tests_local(slug: str) -> str:
+    """
+    Build the test scenarios JSON and write it to the slug state directory.
+
+    Local-flow equivalent of ``write_tests`` — no GitHub access required.
+    Reads schema and products from disk; reads the local profile JSON written
+    by ``write_profile_local``; generates test scenarios; writes them to
+    ``<TMPDIR>/product-reader-ai/<slug>/tests.json``.
+
+    Args:
+        slug: Webshop slug (e.g. ``"balticapets-pl"``).
+
+    Returns:
+        Confirmation string with the output file path and byte count.
+    """
+    from state import STATE_ROOT
+
+    schema = TEST_SCHEMA
+    products = _slim_products(load_products._tool_func(slug))
+    profile_path = str(STATE_ROOT / slug / "profile.json")
+    output_path = str(STATE_ROOT / slug / "tests.json")
+
+    agent = _build_local_test_writer_agent()
+    prompt = (
+        f"Webshop slug: {slug}\n"
+        f"Profile file path: {profile_path}\n"
+        f"Output file path: {output_path}\n\n"
+        f"=== SCHEMA ===\n{schema}\n\n"
+        f"=== SAMPLE PRODUCTS (15) ===\n{products}\n\n"
+        f'Call read_file_from_disk("{profile_path}") to load the profile and '
+        f"discover attribute keys. Then build the test scenarios JSON following "
+        f"the schema exactly and call "
+        f'write_file_to_disk("{output_path}", <json_content>).'
+    )
+    return str(agent(prompt))
+
+
 if __name__ == "__main__":
     import argparse
 
