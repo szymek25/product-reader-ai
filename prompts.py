@@ -19,7 +19,6 @@ TASK_PROMPT_TEMPLATE = """
 Webshop: {webshop_urls}
 Repo: {target_repo}  |  Base branch: {base_branch}
 Profiles: {profiles_path}  |  Tests: {tests_path}
-Schema source – features: {features_path}  |  mocks: {mocks_path}
 Generate Baseline workflow: {generate_baseline_workflow}
 Accept Baseline workflow:   {accept_baseline_workflow}
 
@@ -27,11 +26,6 @@ Accept Baseline workflow:   {accept_baseline_workflow}
 START
   `resolve_slug`(webshop_url) → slug (canonical id for all subsequent calls).
   `load_run_state`(slug) → resume from the step after the last completed one.
-
-STEP 0 — Learn schema
-  `learn_schema`(target_repo, base_branch, features_path, mocks_path)
-  Returns immediately if schema is already cached.
-  `save_run_state`(slug, {{"step": 0}})
 
 STEP 1 — Collect 15 products
   a. `load_products`(slug) → if result contains 15 items, skip to STEP 2.

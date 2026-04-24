@@ -31,7 +31,8 @@ from strands.agent.conversation_manager import SlidingWindowConversationManager
 
 from model_factory import build_model, main_agent_model_id
 import context
-from state import load_products, load_schema, load_selectors
+from schemas import TEST_SCHEMA
+from state import load_products
 
 
 def _slim_products(raw: str) -> str:
@@ -53,16 +54,16 @@ TEST_WRITER_SYSTEM_PROMPT = """\
 You are a test-scenario writing agent.
 
 You receive:
-  - A JSON schema describing the exact structure of a valid test scenario file.
-  - A JSON array of CSS selectors (role → selector mapping).
-  - A JSON array of 15 sample products collected from the webshop.
-  - The already-committed profile file for the webshop.
+  - The test scenario JSON schema rules (field names, types, nesting, and allowed values).
+  - A JSON array of sample products collected from the webshop.
+  - The already-committed profile file for the webshop (contains attribute keys).
 
 Your job:
-1. Build a test scenario JSON file that conforms EXACTLY to the schema structure.
-   Mirror all field names, types, and nesting — do not invent or omit fields.
-2. For each test scenario, use the product data as the expected values and the
-   selectors as the extraction mechanism, following the conventions in the schema.
+1. Build a test scenario JSON file that conforms EXACTLY to the schema rules.
+   One test entry per product. Always include: product_name (TEXT),
+   short_description (TEXT), description (HTML), image_urls (LINK).
+   Add attributes.<key> (TEXT) entries for each attribute the product has.
+2. Read the committed profile to discover which attribute keys exist.
 3. Commit the file to the specified repository branch using create_or_update_file.
    Always pass the branch name explicitly.
 4. Output ONLY the commit confirmation — no prose.
@@ -105,7 +106,7 @@ def write_tests(
     Returns:
         Confirmation string including the committed file path.
     """
-    schema = load_schema._tool_func()
+    schema = TEST_SCHEMA
     products = _slim_products(load_products._tool_func(slug))
 
     agent = _build_test_writer_agent(context.github_mcp_client)

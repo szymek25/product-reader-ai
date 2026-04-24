@@ -29,7 +29,8 @@ from strands.agent.conversation_manager import SlidingWindowConversationManager
 
 from model_factory import build_model, main_agent_model_id
 import context
-from state import load_products, load_schema, load_selectors
+from schemas import PROFILE_SCHEMA
+from state import load_products, load_selectors
 
 
 def _slim_selectors(raw: str) -> str:
@@ -63,14 +64,15 @@ PROFILE_WRITER_SYSTEM_PROMPT = """\
 You are a profile-writing agent.
 
 You receive:
-  - A JSON schema describing the exact structure of a valid profile file.
-  - A JSON array of CSS selectors (role → selector mapping).
-  - A JSON array of 15 sample products collected from the webshop.
+  - The profile JSON schema rules (field names, types, nesting, and allowed values).
+  - A JSON array of CSS selectors (role → selector mapping) derived from the webshop.
+  - A JSON array of sample products collected from the webshop.
 
 Your job:
-1. Build a profile JSON file that conforms EXACTLY to the schema structure.
-   Mirror all field names, types, and nesting — do not invent or omit fields.
-2. Populate each selector field in the profile using the provided selectors.
+1. Build a profile JSON file that conforms EXACTLY to the schema rules.
+   Always include: id, product_name, short_description, description, image_urls.
+   Add attribute_table and attributes array if the products contain attribute data.
+2. Populate each selector field using the provided selectors.
 3. Commit the file to the specified repository branch using create_or_update_file.
    Always pass the branch name explicitly.
 4. Output ONLY the commit confirmation — no prose.
@@ -111,7 +113,7 @@ def write_profile(
     Returns:
         Confirmation string including the committed file path.
     """
-    schema = load_schema._tool_func()
+    schema = PROFILE_SCHEMA
     selectors = _slim_selectors(load_selectors._tool_func(slug))
     products = _slim_products(load_products._tool_func(slug))
 

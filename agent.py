@@ -48,7 +48,6 @@ from strands.tools.mcp import MCPClient
 import context
 from model_factory import build_model, main_agent_model_id
 from prompts import SYSTEM_PROMPT, TASK_PROMPT_TEMPLATE
-from schema_agent import learn_schema
 from product_page_agent import analyze_product_page
 from product_links_agent import find_product_links
 from scraper_agent import scrape_all_products, scrape_product
@@ -60,7 +59,6 @@ from state import (
     load_product_links,
     load_products,
     load_run_state,
-    load_schema,
     load_selectors,
     log_mismatch,
     lookup_slug,
@@ -69,7 +67,6 @@ from state import (
     save_product_links,
     save_products,
     save_run_state,
-    save_schema,
     save_selectors,
 )
 
@@ -83,8 +80,6 @@ GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "")
 TARGET_REPO = os.environ.get("TARGET_REPO", "")
 BASE_BRANCH = os.environ.get("BASE_BRANCH", "main")
 WEBSHOP_URLS_RAW = os.environ.get("WEBSHOP_URLS", "")
-FEATURES_PATH = os.environ.get("FEATURES_PATH", "features/products")
-MOCKS_PATH = os.environ.get("MOCKS_PATH", "public/mock")
 PROFILES_PATH = os.environ.get("PROFILES_PATH", "validation/profiles")
 TESTS_PATH = os.environ.get("TESTS_PATH", "validation/tests")
 GENERATE_BASELINE_WORKFLOW = os.environ.get(
@@ -127,8 +122,6 @@ def _build_task_prompt() -> str:
         webshop_urls=webshop_urls,
         target_repo=TARGET_REPO,
         base_branch=BASE_BRANCH,
-        features_path=FEATURES_PATH,
-        mocks_path=MOCKS_PATH,
         profiles_path=PROFILES_PATH,
         tests_path=TESTS_PATH,
         generate_baseline_workflow=GENERATE_BASELINE_WORKFLOW,
@@ -183,8 +176,6 @@ def main() -> None:
         system_prompt=SYSTEM_PROMPT,
         tools=[
             github_mcp_client,
-            # STEP 0 – read reference files → persist shared schema
-            learn_schema,
             # STEP 1a – discover product URLs
             find_product_links,
             # STEP 1b – derive CSS selectors for a product page
@@ -198,8 +189,6 @@ def main() -> None:
             # STEP 6-7 – baseline dispatch → verify → retry loop
             validate_baseline,
             # Local state persistence
-            save_schema,
-            load_schema,
             save_selectors,
             load_selectors,
             save_product_links,
