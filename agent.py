@@ -50,7 +50,7 @@ from model_factory import build_model, main_agent_model_id
 from prompts import SYSTEM_PROMPT, TASK_PROMPT_TEMPLATE
 from product_page_agent import analyze_product_page
 from product_links_agent import find_product_links
-from scraper_agent import scrape_all_products, scrape_product
+from scraper_agent import scrape_all_products
 from profile_writer_agent import write_profile
 from test_writer_agent import write_tests
 from validation_agent import validate_baseline
@@ -61,7 +61,6 @@ from state import (
     load_run_state,
     load_selectors,
     log_mismatch,
-    lookup_slug,
     register_slug,
     resolve_slug,
     save_product_links,
@@ -200,7 +199,6 @@ def main() -> None:
             log_mismatch,
             load_mismatch_log,
             register_slug,
-            lookup_slug,
             resolve_slug,
         ],
         tool_executor=SequentialToolExecutor(),

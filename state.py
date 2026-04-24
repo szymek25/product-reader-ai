@@ -8,7 +8,6 @@ webshop or re-reading reference files.
 Directory layout:
   <TMPDIR>/product-reader-ai/
     slug_registry.json              # webshop URL → slug mapping (persists across runs)
-    schema.json                     # shared profile + test-scenario schema (all webshops)
     <slug>/
       selectors.json                # CSS selectors derived by analyze_product_page
       products.json                 # 15 collected product records
@@ -391,30 +390,6 @@ def register_slug(url: str, slug: str) -> str:
 
 
 @tool
-def lookup_slug(url: str) -> str:
-    """
-    Look up the slug previously registered for a webshop URL.
-
-    Call this at the very start of a run, before deriving a new slug in STEP 2.
-    If a slug is returned, use it (and check load_run_state for resume info).
-
-    Args:
-        url: The canonical webshop URL (e.g. "https://fluffypet.pl/").
-
-    Returns:
-        The previously registered slug, or an empty string if none is found.
-    """
-    registry_path = _STATE_ROOT / "slug_registry.json"
-    if not registry_path.exists():
-        return ""
-    try:
-        registry = json.loads(registry_path.read_text(encoding="utf-8"))
-        return registry.get(url, "")
-    except json.JSONDecodeError:
-        return ""
-
-
-@tool
 def resolve_slug(url: str) -> str:
     """
     Return the canonical slug for *url*, creating and persisting one if needed.
@@ -425,7 +400,7 @@ def resolve_slug(url: str) -> str:
          ``-``, lowercase, keep only ``[a-z0-9-]``).
       3. Register the new mapping so all future calls return the same slug.
 
-    Always prefer this over ``lookup_slug`` + manual slug derivation: it is
+    Always prefer this over manual slug derivation: it is
     deterministic, consistent across runs, and automatically persists the mapping.
 
     Args:
