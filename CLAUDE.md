@@ -6,18 +6,37 @@
 
 ---
 
+## Development Phases
+
+| Phase | Status | Description |
+|-------|--------|-------------|
+| **Phase 1 — Local** | ✅ Active | Run fully locally; `LOCAL_FLOW=true`; artifacts on disk. |
+| **Phase 2 — AWS** | Planned | Deploy to AWS (Lambda / ECS / Fargate). |
+| **Phase 3 — GitHub** | Planned | GitHub integration: commits, PRs, baseline validation. |
+
+**Current focus: Phase 1** — getting output quality right before deployment.
+
+---
+
 ## Overview
 
-`product-reader-ai` is a multi-agent AI system that **crawls webshops, extracts product data, and generates profiles + test scenarios** via an orchestrator pattern. The workflow:
+`product-reader-ai` is a multi-agent AI system that **crawls webshops, extracts product data, and generates profiles + test scenarios** via an orchestrator pattern.
 
-1. **STEP 0**: Learn schema from GitHub reference files
-2. **STEP 1**: Discover product URLs → analyze page structure → scrape all products
-3. **STEP 2**: Register slug and create feature branch
-4. **STEP 3**: Write product profile JSON and commit
-5. **STEP 4**: Write test scenarios JSON and commit
-6. **STEP 5**: Open PR for review
-7. **STEP 6**: Run baseline validation, retry on failure
-8. **STEP 7/8**: Report success or post failure comments
+### Local flow (Phase 1)
+
+1. **STEP 1**: Discover product URLs → analyse page structure → scrape all products
+2. **STEP 2**: Write product profile JSON to disk
+3. **STEP 3**: Write test scenarios JSON to disk
+
+### GitHub flow (Phase 3)
+
+1. **STEP 1**: same as local
+2. **STEP 2**: Register slug and create feature branch
+3. **STEP 3**: Write product profile JSON and commit
+4. **STEP 4**: Write test scenarios JSON and commit
+5. **STEP 5**: Open PR for review
+6. **STEP 6**: Run baseline validation, retry on failure
+7. **STEP 7/8**: Report success or post failure comments
 
 ---
 
@@ -27,23 +46,23 @@
 
 | Module | Purpose |
 |--------|---------|
-| `agent.py` | Orchestrator entry point; builds Agent with all tools |
-| `context.py` | Shared module-level `github_mcp_client: MCPClient \| None` (set before agent runs) |
-| `state.py` | Disk-based state persistence tools (schema, selectors, products, links, mismatches) |
-| `prompts.py` | System + task prompts (lean, focused on workflow steps) |
-| `model_factory.py` | Bedrock model config for orchestrator + all 6 sub-agents |
+| `agent.py` | Orchestrator entry point; branches on `LOCAL_FLOW` |
+| `context.py` | Shared module-level `github_mcp_client: MCPClient \| None` (set before agent runs; `None` in local mode) |
+| `state.py` | Disk-based state persistence tools (schema, selectors, products, links, mismatches, generic file I/O) |
+| `prompts.py` | System + task prompts — `TASK_PROMPT_TEMPLATE` (GitHub) and `LOCAL_TASK_PROMPT_TEMPLATE` (local) |
+| `model_factory.py` | Bedrock model config for orchestrator + all sub-agents |
+| `schemas.py` | Embedded profile and test scenario schemas |
 
-### Sub-Agents (STEP-wise)
+### Sub-Agents
 
-| Agent | Step | Purpose | Key Tools |
-|-------|------|---------|-----------|
-| `schema_agent.py` | 0 | Learn schema from GitHub refs | `learn_schema` |
-| `product_links_agent.py` | 1a | Discover product URLs | `find_product_links` |
-| `product_page_agent.py` | 1b | Derive CSS selectors from one URL | `analyze_product_page`, `extract_product_data`, `fetch_and_extract_elements` |
-| `scraper_agent.py` | 1c | Extract product data from all URLs | `scrape_product`, `scrape_all_products` |
-| `profile_writer_agent.py` | 3 | Write + commit profile JSON | `write_profile` |
-| `test_writer_agent.py` | 4 | Write + commit test scenarios JSON | `write_tests` |
-| `validation_agent.py` | 6 | Run workflows, compare results, retry | `validate_baseline` |
+| Agent | Phase | Purpose | Key Tools |
+|-------|-------|---------|-----------|
+| `product_links_agent.py` | Both | Discover product URLs | `find_product_links` |
+| `product_page_agent.py` | Both | Derive CSS selectors from one URL | `analyze_product_page`, `fetch_and_extract_elements`, `build_selectors` |
+| `scraper_agent.py` | Both | Extract product data from all URLs | `scrape_product`, `scrape_all_products` |
+| `profile_writer_agent.py` | Both | Write profile JSON | `write_profile` (GitHub), `write_profile_local` (local) |
+| `test_writer_agent.py` | Both | Write test scenarios JSON | `write_tests` (GitHub), `write_tests_local` (local) |
+| `validation_agent.py` | Phase 3 | Run workflows, compare results, retry | `validate_baseline` |
 
 ---
 
@@ -52,68 +71,55 @@
 All state lives under `Path(tempfile.gettempdir()) / "product-reader-ai"`:
 
 ```
-schema.json                           # Global schema reference
 slug_registry.json                    # Mapping of slugs to repos
 <slug>/
   ├─ run_state.json                   # Step index, branch info, PR number
   ├─ selectors.json                   # CSS selectors (role → selector mapping)
   ├─ products.json                    # Extracted product data
   ├─ product_links.json               # Discovered product URLs
-  ├─ mismatches.jsonl                 # Validation failure log
+  ├─ profile.json                     # Generated profile (local flow output)
+  ├─ tests.json                       # Generated test scenarios (local flow output)
+  ├─ mismatches.jsonl                 # Validation failure log (Phase 3)
   └─ page_elements/
-     └─ <hash>_elements.json          # Cached HTML elements per URL
+     └─ <hash>_elements.json          # Cached 80-element LLM view per URL
 ```
 
 ---
 
-## Recent Fixes & Optimizations (Session: Token Reduction)
+## Token Usage (Measured)
 
-### Problem
-**MaxTokensReachedException** during product scraping — sub-agent internals and full data payloads were flowing into orchestrator's context window.
+| Mode | Tokens per run | Root cause |
+|------|---------------|-----------|
+| Local flow (`LOCAL_FLOW=true`) | ~200k | LLM calls only |
+| GitHub flow | ~12M | GitHub MCP responses dominate (file reads, search results, commit responses accumulate in orchestrator context) |
 
-### Solutions Applied
-
-#### 1. **Context Isolation** (`context.py`)
-- Moved `github_mcp_client` to module-level variable (not a `@tool` parameter)
-- All sub-agents: `import context; context.github_mcp_client` (set once before running)
-- **Impact**: LLM no longer tries to fill non-serializable objects
-
-#### 2. **Sliding Window Managers**
-- All 6 sub-agents now have `SlidingWindowConversationManager(window_size=10, should_truncate_results=True)`
-- **Impact**: Sub-agent histories stay bounded; old turns discarded
-
-#### 3. **Scraper Loop Refactoring**
-- Old: Orchestrator looped over 15 URLs, received full product JSON each time
-- New: `scrape_all_products(slug)` is pure Python; loads/resumes/saves internally; returns confirmation only
-- **Impact**: Orchestrator never sees individual product payloads
-
-#### 4. **Data Slimming in Prompts**
-- **profile_writer**: `_slim_selectors()` (keep role/selector/type), `_slim_products()` (truncate desc>300 chars, 1 image)
-- **test_writer**: `_slim_products()` applied; selectors **removed entirely** from prompt (already in committed profile)
-- **validation_agent**: `_slim_products_for_validation()` (keep only url/name/short_description)
-- **Impact**: Prompts ~80% smaller
-
-#### 5. **Return Value Slimming**
-- `analyze_product_page`: returns JSON with role/selector/type only (strips surrounding_html+sample_text)
-- `learn_schema`: returns confirmation string `"Schema learned and saved to disk."` instead of full schema
-- **Impact**: Orchestrator context reduced; disk copies already slim
+**The 60× difference is entirely from GitHub MCP tool responses.** The local flow eliminates all of that. This is why Phase 1 focuses on local correctness first.
 
 ---
 
-## Current State: Module Checklist
+## Token Optimisations Applied
 
-- ✅ `schema_agent.py` — returns confirmation, caches on re-runs
-- ✅ `product_links_agent.py` — window manager active
-- ✅ `product_page_agent.py` — returns slim JSON (role/selector/type only)
-- ✅ `scraper_agent.py` — `scrape_all_products()` pure-Python loop; `scrape_product()` persists internally
-- ✅ `profile_writer_agent.py` — slim selectors + products applied
-- ✅ `test_writer_agent.py` — slim products applied; selectors removed from prompt
-- ✅ `validation_agent.py` — slim products (url/name/short_desc) applied
-- ✅ `agent.py` — orchestrator uses new tool signatures; `context.github_mcp_client` set before run
-- ✅ `state.py` — disk tools for schema/selectors/products/links/mismatches
-- ✅ `prompts.py` — lean system + task prompts; STEP-by-STEP guidance
-- ✅ `context.py` — shared MCP client holder
-- ✅ Import verification — `python -c "from agent import main; print('OK')"` ✓
+### 1. Context Isolation (`context.py`)
+- `github_mcp_client` is a module-level variable, never a `@tool` parameter
+- Set to `None` in local mode — sub-agents that check it simply skip GitHub calls
+
+### 2. Sliding Window Managers
+- All sub-agents: `SlidingWindowConversationManager(window_size=10, should_truncate_results=True)`
+- Orchestrator: `window_size=40, should_truncate_results=True`
+- Keeps histories bounded; truncates oversized tool results
+
+### 3. Scraper Loop as Pure Python
+- `scrape_all_products(slug)` iterates URLs internally; orchestrator never sees individual product payloads
+- Returns only a count confirmation string
+
+### 4. Data Slimming in Prompts
+- `_slim_selectors()` — keeps role/selector/type only
+- `_slim_products()` — truncates description >300 chars, 1 image URL
+- validation uses url/name/short_description only
+
+### 5. Return Value Slimming
+- `build_selectors` returns role/selector/type only (no `surrounding_html`, no `sample_text`)
+- `page_elements` artifact stores only the 80-element LLM-visible subset, not all 500+ raw elements
 
 ---
 
@@ -125,44 +131,58 @@ python -m venv venv
 source venv/bin/activate
 pip install -e .
 
-# Run the orchestrator
+# Local mode (Phase 1 — recommended)
+LOCAL_FLOW=true python agent.py
+
+# Full GitHub mode (Phase 3)
 python agent.py
 
-# View state on disk
-ls -R /tmp/product-reader-ai/
+# View artifacts
+ls /tmp/product-reader-ai/<slug>/
+cat /tmp/product-reader-ai/<slug>/profile.json | jq
+cat /tmp/product-reader-ai/<slug>/tests.json | jq
 ```
 
-### Environment Variables
-Ensure AWS credentials are set (Bedrock access):
-```bash
-export AWS_REGION=us-west-2
-export AWS_ACCESS_KEY_ID=...
-export AWS_SECRET_ACCESS_KEY=...
+### Minimum `.env` for local mode
+```env
+LOCAL_FLOW=true
+WEBSHOP_URLS=https://example-shop.com
+AWS_REGION=us-east-1
+```
+
+### Additional variables for GitHub mode (Phase 3)
+```env
+LOCAL_FLOW=false
+GITHUB_TOKEN=...
+TARGET_REPO=owner/repo
+BASE_BRANCH=main
 ```
 
 ---
 
 ## Known Patterns & Gotchas
 
-1. **Tool Parameters Must Be Strings**
-   - Strands passes all `@tool` params as JSON strings over stdio
-   - Non-serializable objects (files, clients) → module-level variables via `context`
+1. **`LOCAL_FLOW` flag**
+   - `LOCAL_FLOW=true` skips GitHub MCP client entirely (`context.github_mcp_client = None`)
+   - `_validate_config()` does not require `GITHUB_TOKEN` or `TARGET_REPO` in local mode
+   - `_build_task_prompt()` switches between `LOCAL_TASK_PROMPT_TEMPLATE` and `TASK_PROMPT_TEMPLATE`
 
-2. **No `github_mcp_client` in Tool Signatures**
-   - Set `context.github_mcp_client` once before agent runs
-   - Sub-agents read it via `import context; context.github_mcp_client`
+2. **Tool Parameters Must Be Strings**
+   - Strands passes all `@tool` params as JSON strings over stdio
+   - Non-serializable objects → module-level variables via `context`
 
 3. **Caching via File Existence**
-   - `schema_agent`: checks `(STATE_ROOT / "schema.json").exists()` before building sub-agent
-   - Avoids re-deriving schema on every run
+   - `selectors.json`: if present, `analyze_product_page` is skipped entirely
+   - `products.json`: if 15 items present, all of STEP 1 is skipped
+   - All tools are idempotent — safe to re-run from any step
 
 4. **Sliding Window & Result Truncation**
-   - `SlidingWindowConversationManager(window_size=10, should_truncate_results=True)` on all sub-agents
-   - Keeps 10 most recent turns; truncates older ones if context grows
+   - `should_truncate_results=True` is what caps large MCP responses in GitHub mode
+   - In local mode this rarely triggers (tool outputs are compact)
 
 5. **State Resumption**
-   - All tools are idempotent (safe to re-call)
-   - `scrape_all_products` resumes from index stored in `run_state.json`
+   - `load_run_state(slug)` at startup; resume from the step after `state["step"]`
+   - `scrape_all_products` uses the saved position internally
 
 ---
 
@@ -170,80 +190,61 @@ export AWS_SECRET_ACCESS_KEY=...
 
 ```
 product-reader-ai/
-├─ agent.py                   # Orchestrator
-├─ context.py                 # Shared MCP client
-├─ state.py                   # Disk I/O tools
-├─ prompts.py                 # Prompts for orchestrator
+├─ agent.py                   # Orchestrator (LOCAL_FLOW branch)
+├─ context.py                 # Shared MCP client holder
+├─ state.py                   # Disk I/O tools + write/read_file_to/from_disk
+├─ prompts.py                 # TASK_PROMPT_TEMPLATE + LOCAL_TASK_PROMPT_TEMPLATE
 ├─ model_factory.py           # Bedrock config
-├─ schema_agent.py            # STEP 0
-├─ product_links_agent.py     # STEP 1a
-├─ product_page_agent.py      # STEP 1b
-├─ scraper_agent.py           # STEP 1c
-├─ profile_writer_agent.py    # STEP 3
-├─ test_writer_agent.py       # STEP 4
-├─ validation_agent.py        # STEP 6
-├─ pyproject.toml             # Package config
-├─ README.md                  # User guide
-├─ CLAUDE.md                  # This file (dev reference)
-├─ tests/
-│  └─ test_agent.py           # Integration tests
-└─ product_reader_ai.egg-info/
+├─ schemas.py                 # Embedded profile + test schemas
+├─ product_links_agent.py     # Discover product URLs
+├─ product_page_agent.py      # Derive CSS selectors
+├─ scraper_agent.py           # Scrape all products
+├─ profile_writer_agent.py    # write_profile (GitHub) + write_profile_local
+├─ test_writer_agent.py       # write_tests (GitHub) + write_tests_local
+├─ validation_agent.py        # Phase 3: baseline validation
+├─ pyproject.toml
+├─ README.md
+├─ CLAUDE.md                  # This file
+└─ tests/
+   └─ test_agent.py
 ```
 
 ---
 
-## Token Budget Targets
+## Phase 2 Notes (AWS Deployment — Planned)
 
-| Component | Before | After | Savings |
-|-----------|--------|-------|---------|
-| Profile prompt | ~8KB (full selectors + all products) | ~1.5KB (slim) | ~80% |
-| Test prompt | ~8KB (full selectors + products) | ~1.5KB (products only) | ~80% |
-| Validation prompt | ~5KB (full products) | ~2KB (url/name/desc) | ~60% |
-| Orchestrator window | Unbounded | ~10 turns (sliding) | ~70% |
-| `analyze_product_page` return | ~3KB (with HTML) | ~0.5KB (slim JSON) | ~80% |
-| `learn_schema` return | ~10KB (full schema) | ~50B (confirmation) | ~99% |
+- Package as a container (Dockerfile) or Lambda handler
+- State directory (`/tmp/product-reader-ai/`) maps naturally to Lambda's ephemeral `/tmp`
+- For ECS/Fargate: mount an EFS volume or use S3 for state persistence across retries
+- Bedrock credentials via IAM role (no `AWS_ACCESS_KEY_ID` needed)
+- Consider SQS trigger: one message per webshop URL
 
-**Total estimated reduction**: ~75% of token usage (from full-data flow to lean workflow)
+## Phase 3 Notes (GitHub Integration — Planned)
 
----
-
-## Next Steps (If Needed)
-
-- Monitor actual token usage during real runs (via Bedrock CloudWatch)
-- Profile sub-agent performance (latency per step)
-- Consider batching product scrapes if >100 products
-- Add retry logic for transient network failures
-- Expand test coverage in `tests/test_agent.py`
+- Requires `github-mcp-server` running as a sidecar or called via Docker/Podman
+- Estimated token cost: ~12M per webshop run (measured)
+- Orchestrator `window_size=40` with `should_truncate_results=True` is critical
+- GitHub MCP responses are the dominant cost — consider caching schema reads
 
 ---
 
 ## Debugging
 
-### Import Errors
 ```bash
+# Import check
 python -c "from agent import main; print('OK')"
-```
 
-### State Inspection
-```bash
-# View schema
-cat /tmp/product-reader-ai/schema.json | jq
+# View artifacts
+cat /tmp/product-reader-ai/<slug>/profile.json | jq
+cat /tmp/product-reader-ai/<slug>/tests.json | jq
+cat /tmp/product-reader-ai/<slug>/products.json | jq
 
-# View products for slug
-cat "/tmp/product-reader-ai/<slug>/products.json" | jq
-
-# Tail mismatches
-tail -f "/tmp/product-reader-ai/<slug>/mismatches.jsonl"
-```
-
-### Agent Logs
-```bash
-# Tail orchestrator output
-python agent.py 2>&1 | tail -100
+# Tail agent output
+LOCAL_FLOW=true python agent.py 2>&1 | tail -100
 ```
 
 ---
 
 **Last Updated**: 24 April 2026  
-**Session**: Token Reduction Sprint (6 fixes applied)  
-**Status**: ✅ Ready for production runs
+**Phase**: 1 — Local (active)  
+**Status**: ✅ Local flow working; output quality refinement in progress
